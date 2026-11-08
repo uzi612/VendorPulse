@@ -5,6 +5,8 @@ from rest_framework import status
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
 from .serializers import RegisterSerializer, UserSerializer
+from .models import Profile
+from orders.models import Order, OrderItem
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -46,7 +48,10 @@ def login_view(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def logout_view(request):
-    request.user.auth_token.delete()
+    try:
+        request.user.auth_token.delete()
+    except (AttributeError, Token.DoesNotExist):
+        pass
     return Response({"message": "Successfully logged out"}, status=status.HTTP_200_OK)
 
 
@@ -55,3 +60,47 @@ def logout_view(request):
 def me_view(request):
     serializer = UserSerializer(request.user)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
+def user_profile_api(request):
+    user = request.user
+    profile, _ = Profile.objects.get_or_create(user=user)
+    
+    if request.method == 'PUT':
+        profile.phone = request.data.get('phone', profile.phone)
+        profile.city = request.data.get('city', profile.city)
+        profile.save()
+        
+    # Serialize orders for the profile page view
+    orders = [{
+        "id": o.id,
+        "total_price": o.total_price,
+        "created_at": o.created_at.strftime("%d %b %Y, %I:%M %p"),
+        "status": o.items.first().status if o.items.exists() else "ORDER_PLACED",
+        "items": [{"item_title": i.item_title, "item_price": i.item_price} for i in o.items.all()]
+    } for o in Order.objects.filter(user=user).order_by('-created_at')]
+
+    # Serialize sales for the seller items sold view
+    sales = [{
+        "id": s.id,
+        "item_title": s.item_title,
+        "item_price": s.item_price,
+        "status": s.status,
+        "buyer": s.order.user.username,
+        "shipping_address": s.order.shipping_address,
+        "created_at": s.order.created_at.strftime("%d %b %Y, %I:%M %p")
+    } for s in OrderItem.objects.filter(seller=user).select_related('order', 'order__user').order_by('-order__created_at')]
+
+    return Response({
+        "username": user.username,
+        "email": user.email,
+        "date_joined": user.date_joined.strftime("%b %Y"),
+        "profile": {
+            "phone": profile.phone or "",
+            "city": profile.city or "",
+        },
+        "orders": orders,
+        "sales": sales
+    })
