@@ -1,17 +1,18 @@
+import os
 from pathlib import Path
-# 05494c1e3ee9ca991af154adb26c4a400510b77f
+from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
+load_dotenv(BASE_DIR / '.env')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-j4&!8kwxog41bk2!arspgmol#vwm6ulu)%+oyjyt5ohd3a780k'
+SECRET_KEY = os.environ.get('SECRET_KEY', 'fallback-insecure-key-for-dev')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = []
 
@@ -28,8 +29,10 @@ INSTALLED_APPS = [
     'accounts',
     'products',
     'orders',
+    'deliveries',
     'rest_framework',
     'rest_framework.authtoken',
+    'corsheaders',
 ]
 
 REST_FRAMEWORK = {
@@ -46,6 +49,12 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
+]
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
 ROOT_URLCONF = 'vendorpulse_core.urls'
@@ -72,11 +81,11 @@ WSGI_APPLICATION = 'vendorpulse_core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'vendorpulse_db',        # Make sure you created this database in MySQL first!
-        'USER': 'root',       # e.g., 'root'
-        'PASSWORD': 'root', # Your MySQL password
-        'HOST': 'localhost',
-        'PORT': '3307',
+        'NAME': os.environ.get('DB_NAME', 'vendorpulse_db'),
+        'USER': os.environ.get('DB_USER', 'root'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'PORT': os.environ.get('DB_PORT', '3307'), # Matches your MySQL port setup
         'OPTIONS': {
             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
         },
@@ -125,3 +134,6 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
