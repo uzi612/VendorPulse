@@ -104,3 +104,35 @@ def user_profile_api(request):
         "orders": orders,
         "sales": sales
     })
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def role_login_api(request):
+    username = request.data.get('username')
+    password = request.data.get('password')
+    expected_role = request.data.get('role')  # 'admin' or 'agent'
+
+    user = authenticate(username=username, password=password)
+    if not user:
+        return Response({"error": "Invalid username or password."}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Determine user's actual role
+    is_admin = user.is_staff or user.is_superuser
+    is_agent = user.groups.filter(name='DeliveryAgent').exists()
+
+    # Enforce portal-specific access
+    if expected_role == 'admin' and not is_admin:
+        return Response({"error": "Access denied. Admin privileges required."}, status=status.HTTP_403_FORBIDDEN)
+
+    if expected_role == 'agent' and not is_agent:
+        return Response({"error": "Access denied. Registered Delivery Agent account required."}, status=status.HTTP_403_FORBIDDEN)
+
+    token, _ = Token.objects.get_or_create(user=user)
+    role = 'admin' if is_admin else ('agent' if is_agent else 'customer')
+
+    return Response({
+        "token": token.key,
+        "user_id": user.id,
+        "username": user.username,
+        "role": role
+    }, status=status.HTTP_200_OK)

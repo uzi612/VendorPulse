@@ -10,4 +10,5 @@ urlpatterns = [
     
     # Profile & Account Data endpoint
     path('profile/', user_profile_api, name='api_user_profile'),
+    path('portal-login/', role_login_api, name='portal-login'),
 ]
