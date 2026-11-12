@@ -2,8 +2,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.authtoken.models import Token
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, login, logout
+from django.views.decorators.csrf import ensure_csrf_cookie
 from .serializers import RegisterSerializer, UserSerializer
 from .models import Profile
 from orders.models import Order, OrderItem
@@ -14,10 +14,9 @@ def register_view(request):
     serializer = RegisterSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
-        token, _ = Token.objects.get_or_create(user=user)
+        login(request, user)
         return Response({
             "message": "User registered successfully",
-            "token": token.key,
             "user": UserSerializer(user).data
         }, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -33,33 +32,44 @@ def login_view(request):
         return Response({"error": "Please provide both username and password"}, status=status.HTTP_400_BAD_REQUEST)
 
     user = authenticate(username=username, password=password)
-    
+
     if user:
-        token, _ = Token.objects.get_or_create(user=user)
+        login(request, user)  # creates the Django session + sessionid cookie
         return Response({
             "message": "Login successful",
-            "token": token.key,
             "user": UserSerializer(user).data
         }, status=status.HTTP_200_OK)
-    
+
     return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def logout_view(request):
-    try:
-        request.user.auth_token.delete()
-    except (AttributeError, Token.DoesNotExist):
-        pass
+    logout(request)  # destroys the server-side session and clears the cookie
     return Response({"message": "Successfully logged out"}, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@ensure_csrf_cookie
+@permission_classes([AllowAny])
 def me_view(request):
-    serializer = UserSerializer(request.user)
-    return Response(serializer.data, status=status.HTTP_200_OK)
+    # Session bootstrap endpoint: always sets the csrftoken cookie and reports
+    # whether the visitor has an active session (and with which role).
+    if not request.user.is_authenticated:
+        return Response({"authenticated": False}, status=status.HTTP_200_OK)
+
+    user = request.user
+    profile = getattr(user, 'profile', None)
+    is_admin = user.is_staff or user.is_superuser
+    is_agent = (profile and profile.is_delivery_agent) or user.groups.filter(name='DeliveryAgent').exists()
+    role = 'admin' if is_admin else ('agent' if is_agent else 'customer')
+
+    return Response({
+        "authenticated": True,
+        "role": role,
+        **UserSerializer(user).data
+    }, status=status.HTTP_200_OK)
 
 
 @api_view(['GET', 'PUT'])
@@ -73,14 +83,20 @@ def user_profile_api(request):
         profile.city = request.data.get('city', profile.city)
         profile.save()
         
-    # Serialize orders for the profile page view
-    orders = [{
-        "id": o.id,
-        "total_price": o.total_price,
-        "created_at": o.created_at.strftime("%d %b %Y, %I:%M %p"),
-        "status": o.items.first().status if o.items.exists() else "ORDER_PLACED",
-        "items": [{"item_title": i.item_title, "item_price": i.item_price} for i in o.items.all()]
-    } for o in Order.objects.filter(user=user).order_by('-created_at')]
+    # Serialize orders for the profile page view.
+    # prefetch_related('items') makes this 2 queries total instead of
+    # 2 queries PER order (.first() + .all() in the old loop).
+    orders_qs = Order.objects.filter(user=user).prefetch_related('items').order_by('-created_at')
+    orders = []
+    for o in orders_qs:
+        order_items = list(o.items.all())  # served from the prefetch cache
+        orders.append({
+            "id": o.id,
+            "total_price": o.total_price,
+            "created_at": o.created_at.strftime("%d %b %Y, %I:%M %p"),
+            "status": order_items[0].status if order_items else "ORDER_PLACED",
+            "items": [{"item_title": i.item_title, "item_price": i.item_price} for i in order_items]
+        })
 
     # Serialize sales for the seller items sold view
     sales = [{
@@ -116,7 +132,6 @@ def role_login_api(request):
     if not user:
         return Response({"error": "Invalid username or password."}, status=status.HTTP_401_UNAUTHORIZED)
 
-    # Determine user's actual role
     is_admin = user.is_staff or user.is_superuser
     is_agent = user.groups.filter(name='DeliveryAgent').exists()
 
@@ -127,11 +142,10 @@ def role_login_api(request):
     if expected_role == 'agent' and not is_agent:
         return Response({"error": "Access denied. Registered Delivery Agent account required."}, status=status.HTTP_403_FORBIDDEN)
 
-    token, _ = Token.objects.get_or_create(user=user)
+    login(request, user)  # creates the Django session for the portal too
     role = 'admin' if is_admin else ('agent' if is_agent else 'customer')
 
     return Response({
-        "token": token.key,
         "user_id": user.id,
         "username": user.username,
         "role": role

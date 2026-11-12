@@ -8,6 +8,7 @@ class Profile(models.Model):
     city = models.CharField(max_length=100, blank=True, null=True)
     phone = models.CharField(max_length=15, blank=True, null=True)
     is_delivery_agent = models.BooleanField(default=False)
+    is_verified = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.user.username} ({'Agent' if self.is_delivery_agent else 'User'})"
