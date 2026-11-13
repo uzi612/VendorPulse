@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
+import { api } from '../api';
+import { CITIES } from '../cities';
 
 export default function EditListing() {
     const { id } = useParams();
@@ -12,11 +14,11 @@ export default function EditListing() {
         category: 'ELECTRONICS',
         condition: 'NEW',
         location: '',
+        address: '',
         image: null
     });
     const [previewImage, setPreviewImage] = useState(null);
 
-    // Exact database choices matching your Django model
     const categoryChoices = [
         { label: 'Clothing', value: 'CLOTHING' },
         { label: 'Electronics', value: 'ELECTRONICS' },
@@ -36,13 +38,7 @@ export default function EditListing() {
     useEffect(() => {
         const fetchItemDetails = async () => {
             try {
-                const token = localStorage.getItem('authToken');
-                const res = await fetch(`/api/products/items/${id}/`, {
-                    headers: {
-                        'Authorization': token ? `Token ${token}` : '',
-                        'Content-Type': 'application/json'
-                    }
-                });
+                const res = await api(`/api/products/items/${id}/`);
 
                 if (res.ok) {
                     const data = await res.json();
@@ -61,6 +57,7 @@ export default function EditListing() {
                         category: validCategory,
                         condition: validCondition,
                         location: data.location || '',
+                        address: data.address || '',
                         image: null
                     });
                     setPreviewImage(data.image || null);
@@ -97,12 +94,8 @@ export default function EditListing() {
         });
 
         try {
-            const token = localStorage.getItem('authToken');
-            const res = await fetch(`/api/products/items/${id}/`, {
+            const res = await api(`/api/products/items/${id}/`, {
                 method: 'PUT',
-                headers: {
-                    'Authorization': token ? `Token ${token}` : ''
-                },
                 body: data
             });
 
@@ -158,13 +151,26 @@ export default function EditListing() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Location</label>
-                            <input 
-                                type="text" 
-                                name="location" 
-                                value={formData.location} 
-                                onChange={handleChange} 
-                                className="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" 
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">City</label>
+                            <select
+                                name="location"
+                                value={formData.location}
+                                onChange={handleChange}
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                            >
+                                <option value="">Select City</option>
+                                {CITIES.map(city => <option key={city} value={city}>{city}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Pickup Address</label>
+                            <input
+                                type="text"
+                                name="address"
+                                value={formData.address}
+                                onChange={handleChange}
+                                placeholder="Street / area for agent pickup"
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                             />
                         </div>
                     </div>

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { api } from '../api';
 
-export default function Login({ setIsAuthenticated }) {
+export default function Login({ onLoginSuccess }) {
     const navigate = useNavigate();
     const [formData, setFormData] = useState({ username: '', password: '' });
     const [error, setError] = useState('');
@@ -13,9 +14,8 @@ export default function Login({ setIsAuthenticated }) {
         setLoading(true);
 
         try {
-            const response = await fetch('/api/accounts/login/', {
+            const response = await api('/api/accounts/login/', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(formData)
             });
 
@@ -26,13 +26,8 @@ export default function Login({ setIsAuthenticated }) {
                 throw new Error(data.error || data.detail || 'Login failed');
             }
 
-            // Save token to localStorage so state persists across page loads
-            if (data.token) {
-                localStorage.setItem('authToken', data.token);
-                localStorage.setItem('username', data.username);
-            }
-
-            setIsAuthenticated(true);
+            // Session cookie is set by the server automatically.
+            if (onLoginSuccess) await onLoginSuccess();
             navigate('/');
         } catch (err) {
             setError(err.message);

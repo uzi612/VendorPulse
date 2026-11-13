@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
+import { api } from '../api';
 
 export default function ViewListing() {
     const { id } = useParams();
@@ -9,16 +10,15 @@ export default function ViewListing() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const token = localStorage.getItem('authToken');
-        const headers = { 'Authorization': token ? `Token ${token}` : '' };
-
         Promise.all([
-            fetch(`/api/products/items/${id}/`, { headers }).then(res => res.json()),
-            token ? fetch('/api/accounts/profile/', { headers }).then(res => res.ok ? res.json() : null) : Promise.resolve(null)
+            fetch(`/api/products/items/${id}/`).then(res => res.json()),
+            // me/ works for anonymous visitors too ({authenticated:false}) and
+            // bootstraps the csrftoken cookie needed for the cart POST.
+            api('/api/accounts/me/').then(res => res.ok ? res.json() : null)
         ])
-        .then(([itemData, userData]) => {
+        .then(([itemData, meData]) => {
             setItem(itemData);
-            setCurrentUser(userData);
+            setCurrentUser(meData && meData.authenticated ? meData : null);
             setLoading(false);
         })
         .catch(err => {
@@ -29,22 +29,17 @@ export default function ViewListing() {
 
     const addToCart = async () => {
         try {
-            const token = localStorage.getItem('authToken');
-            if (!token) {
+            if (!currentUser) {
                 alert("Please log in to add items to your cart.");
                 return;
             }
 
-            const res = await fetch(`/api/products/cart/add/${id}/`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Token ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
+            const res = await api(`/api/products/cart/add/${id}/`, { method: 'POST' });
 
             if (res.ok) {
                 navigate('/orders/cart/');
+            } else if (res.status === 401 || res.status === 403) {
+                alert("Your session has expired. Please log in again.");
             } else {
                 const errData = await res.json().catch(() => ({}));
                 alert(errData.error || errData.detail || "Failed to add item to cart.");
@@ -57,7 +52,7 @@ export default function ViewListing() {
     if (loading) return <div className="text-center py-20 text-gray-500">Loading item...</div>;
     if (!item) return <div className="text-center py-20 text-gray-500">Item not found.</div>;
 
-    const username = currentUser?.username || localStorage.getItem('username');
+    const username = currentUser?.username;
     const isOwner = item.is_owner === true || 
                     item.seller === username || 
                     item.seller_username === username;
@@ -100,26 +95,17 @@ export default function ViewListing() {
                             <h3 className="font-bold text-gray-800 mb-2">Description</h3>
                             <p className="text-gray-600 leading-relaxed whitespace-pre-line">{item.description}</p>
                         </div>
-
-                        <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 mb-8">
-                            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Seller Information</h4>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="font-bold text-gray-800">@{item.seller_username || item.seller}</p>
-                                </div>
-                                {item.seller_city && (
-                                    <span className="text-xs bg-white border border-gray-200 text-gray-600 px-2.5 py-1 rounded-lg font-medium">
-                                        City: {item.seller_city}
-                                    </span>
-                                )}
-                            </div>
-                        </div>
                     </div>
                     <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 mb-8">
     <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Seller Information</h4>
     <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
             <p className="font-bold text-gray-800">@{item.seller_username || item.seller}</p>
+            {item.seller_rating != null && (
+                <span className="text-xs text-gray-600" title={`Average of ${item.seller_rating_count} buyer rating(s)`}>
+                    <span className="text-amber-500 font-semibold">★ {item.seller_rating}</span> ({item.seller_rating_count})
+                </span>
+            )}
             {item.is_seller_verified && (
                 <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs px-2.5 py-0.5 rounded-full font-bold border border-blue-100" title="Verified VendorPulse Seller">
                     <svg className="w-3.5 h-3.5 fill-current text-blue-600" viewBox="0 0 20 20">

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../api';
 
-export default function AgentLogin({ setIsAuthenticated }) {
+export default function AgentLogin({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -14,9 +15,8 @@ export default function AgentLogin({ setIsAuthenticated }) {
     setLoading(true);
 
     try {
-      const response = await fetch('/api/accounts/portal-login/', {
+      const response = await api('/api/accounts/portal-login/', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password, role: 'agent' }),
       });
 
@@ -25,9 +25,8 @@ export default function AgentLogin({ setIsAuthenticated }) {
         throw new Error(data.error || 'Agent login failed.');
       }
 
-      localStorage.setItem('authToken', data.token);
-      localStorage.setItem('userRole', data.role);
-      setIsAuthenticated(true);
+      // Session cookie is set by the server; role is re-verified against it.
+      if (onLoginSuccess) await onLoginSuccess();
       navigate('/agent/dashboard/');
     } catch (err) {
       setError(err.message);

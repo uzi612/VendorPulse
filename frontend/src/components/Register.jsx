@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../api';
 
 export default function Register() {
     const [formData, setFormData] = useState({
@@ -29,11 +30,8 @@ export default function Register() {
         setLoading(true);
 
         try {
-            const response = await fetch('/api/accounts/register/', {
+            const response = await api('/api/accounts/register/', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
                 body: JSON.stringify(formData),
             });
 

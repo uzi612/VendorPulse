@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../api';
+import NotificationsBell from './NotificationsBell';
 
 export default function AgentDashboard({ onLogout }) {
     const [activeTab, setActiveTab] = useState('orders');
@@ -7,6 +9,12 @@ export default function AgentDashboard({ onLogout }) {
     const [profile, setProfile] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+
+    // OTP confirmation modal state
+    const [otpModal, setOtpModal] = useState(null);   // { taskId, orderId, itemTitle }
+    const [otpValue, setOtpValue] = useState('');
+    const [otpError, setOtpError] = useState(null);
+    const [otpSubmitting, setOtpSubmitting] = useState(false);
 
     const statusChoices = [
         { value: 'ORDER_PLACED', label: 'Order Placed' },
@@ -19,18 +27,12 @@ export default function AgentDashboard({ onLogout }) {
     const fetchAgentData = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('authToken');
-            
-            const tasksRes = await fetch('http://127.0.0.1:8000/deliveries/agent/deliveries/', {
-                headers: { 'Authorization': `Token ${token}` }
-            });
+            const tasksRes = await api('/api/deliveries/agent/deliveries/');
             if (!tasksRes.ok) throw new Error('Failed to fetch assigned tasks.');
             const tasksData = await tasksRes.json();
             setTasks(tasksData);
 
-            const profileRes = await fetch('http://127.0.0.1:8000/deliveries/agent/profile/', {
-                headers: { 'Authorization': `Token ${token}` }
-            });
+            const profileRes = await api('/api/deliveries/agent/profile/');
             if (profileRes.ok) {
                 const profileData = await profileRes.json();
                 setProfile(profileData);
@@ -45,14 +47,19 @@ export default function AgentDashboard({ onLogout }) {
     useEffect(() => { fetchAgentData(); }, []);
 
     const updateStatus = async (id, newStatus) => {
+        // DELIVERED requires the buyer's OTP -> open the OTP modal instead
+        if (newStatus === 'DELIVERED') {
+            const task = tasks.find(t => t.id === id);
+            if (task) {
+                setOtpModal({ taskId: id, orderId: task.order_id, itemTitle: task.item_title });
+                setOtpValue('');
+                setOtpError(null);
+            }
+            return;
+        }
         try {
-            const token = localStorage.getItem('authToken');
-            const response = await fetch(`http://127.0.0.1:8000/deliveries/agent/deliveries/${id}/update/`, {
+            const response = await api(`/api/deliveries/agent/deliveries/${id}/update/`, {
                 method: 'PATCH',
-                headers: {
-                    'Authorization': `Token ${token}`,
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify({ status: newStatus })
             });
 
@@ -61,6 +68,29 @@ export default function AgentDashboard({ onLogout }) {
             alert('Delivery step updated successfully!');
         } catch (err) {
             alert(err.message);
+        }
+    };
+
+    const confirmDelivery = async () => {
+        setOtpSubmitting(true);
+        setOtpError(null);
+        try {
+            const response = await api(`/api/deliveries/agent/deliveries/${otpModal.taskId}/update/`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: 'DELIVERED', otp: otpValue })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                setOtpError(data.error || 'Failed to confirm delivery.');
+                return;
+            }
+            setOtpModal(null);
+            fetchAgentData();
+            alert('Delivery confirmed — OTP verified!');
+        } catch (err) {
+            setOtpError('Network error. Please try again.');
+        } finally {
+            setOtpSubmitting(false);
         }
     };
 
@@ -76,7 +106,10 @@ export default function AgentDashboard({ onLogout }) {
         <div style={{ minHeight: '100vh', backgroundColor: '#f8fafc' }}>
             <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 32px', backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
                 <h1 style={{ fontSize: '20px', fontWeight: 'bold', color: '#0f172a', margin: 0 }}>VendorPulse Delivery Agent Portal</h1>
-                <button onClick={onLogout} style={{ padding: '8px 16px', backgroundColor: '#ef4444', color: '#ffffff', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>Logout</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <NotificationsBell />
+                    <button onClick={onLogout} style={{ padding: '8px 16px', backgroundColor: '#ef4444', color: '#ffffff', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>Logout</button>
+                </div>
             </header>
 
             <div style={{ display: 'flex', gap: '16px', padding: '16px 32px', backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
@@ -176,6 +209,89 @@ export default function AgentDashboard({ onLogout }) {
                     </div>
                 )}
             </main>
+
+            {/* OTP Confirmation Modal */}
+            {otpModal && (
+                <div
+                    onClick={() => !otpSubmitting && setOtpModal(null)}
+                    style={{
+                        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                        backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        zIndex: 2000, padding: '16px',
+                    }}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            backgroundColor: '#ffffff', borderRadius: '12px', padding: '28px',
+                            width: '360px', maxWidth: '100%', boxShadow: '0 20px 50px rgba(0,0,0,0.3)',
+                        }}
+                    >
+                        <h3 style={{ margin: '0 0 6px 0', fontSize: '18px', color: '#0f172a' }}>
+                            🔐 Confirm Delivery
+                        </h3>
+                        <p style={{ margin: '0 0 4px 0', fontSize: '14px', fontWeight: '600', color: '#2563eb' }}>
+                            {otpModal.itemTitle}
+                        </p>
+                        <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: '#64748b', lineHeight: 1.5 }}>
+                            Ask the buyer for their <b>4-digit delivery code</b> (shown on their order
+                            receipt) and enter it below. Delivery can only be confirmed with the correct code.
+                        </p>
+
+                        <input
+                            type="text"
+                            inputMode="numeric"
+                            autoFocus
+                            maxLength={4}
+                            value={otpValue}
+                            onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && otpValue.length === 4) confirmDelivery(); }}
+                            placeholder="• • • •"
+                            disabled={otpSubmitting}
+                            style={{
+                                width: '100%', boxSizing: 'border-box', padding: '12px',
+                                fontSize: '24px', letterSpacing: '0.5em', textAlign: 'center',
+                                fontWeight: '700', color: '#0f172a',
+                                border: '2px solid #cbd5e1', borderRadius: '8px',
+                                outline: 'none', marginBottom: '12px',
+                            }}
+                        />
+
+                        {otpError && (
+                            <p style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: '600', color: '#dc2626' }}>
+                                ⚠️ {otpError}
+                            </p>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button
+                                onClick={() => setOtpModal(null)}
+                                disabled={otpSubmitting}
+                                style={{
+                                    flex: 1, padding: '10px', borderRadius: '8px',
+                                    backgroundColor: '#f1f5f9', color: '#475569',
+                                    border: 'none', fontWeight: '600', cursor: 'pointer',
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmDelivery}
+                                disabled={otpValue.length !== 4 || otpSubmitting}
+                                style={{
+                                    flex: 1, padding: '10px', borderRadius: '8px',
+                                    backgroundColor: otpValue.length === 4 && !otpSubmitting ? '#16a34a' : '#e2e8f0',
+                                    color: otpValue.length === 4 && !otpSubmitting ? '#ffffff' : '#94a3b8',
+                                    border: 'none', fontWeight: '600', cursor: 'pointer',
+                                }}
+                            >
+                                {otpSubmitting ? 'Verifying...' : 'Confirm Delivery'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -1,19 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { api } from '../api';
 
 export default function CheckoutSuccess() {
-    const { id } = useParams(); // Matches the :id route parameter
+    const { id } = useParams(); 
     const [order, setOrder] = useState(null);
 
     useEffect(() => {
-        const token = localStorage.getItem('authToken');
-        // Fixed: changed orderId to id
-        fetch(`/api/orders/success/${id}/`, {
-            headers: {
-                'Authorization': `Token ${token}`,
-                'Content-Type': 'application/json'
-            }
-        })
+        api(`/api/orders/success/${id}/`)
         .then(res => {
             if (!res.ok) throw new Error("Failed to load order details");
             return res.json();
@@ -43,6 +37,21 @@ export default function CheckoutSuccess() {
                         <p><strong className="text-gray-800">Delivery Address:</strong> {order.shipping_address}</p>
                         <p><strong className="text-gray-800">Contact Number:</strong> {order.phone}</p>
                     </div>
+
+                    {/* Delivery OTP — shown only to the buyer */}
+                    {order.delivery_otp && (
+                        <div className="mt-2 bg-indigo-50 border border-indigo-100 rounded-xl p-5 flex items-center justify-between gap-4">
+                            <div>
+                                <p className="text-xs font-bold text-indigo-600 uppercase tracking-wide">🔐 Delivery OTP</p>
+                                <p className="text-xs text-gray-500 mt-1 leading-snug">
+                                    Give this 4-digit code to the delivery agent <strong className="text-gray-700">only after you receive your item</strong>.
+                                </p>
+                            </div>
+                            <div className="text-3xl font-black text-indigo-700 tracking-[0.35em] shrink-0">
+                                {order.delivery_otp}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

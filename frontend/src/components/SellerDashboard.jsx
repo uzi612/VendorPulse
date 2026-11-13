@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { api } from '../api';
 
 export default function SellerDashboard() {
     const navigate = useNavigate();
@@ -9,6 +10,9 @@ export default function SellerDashboard() {
         pending_payouts: 0,
         active_listings_count: 0,
         sold_items_count: 0,
+        avg_rating: null,
+        rating_count: 0,
+        recent_ratings: [],
         recent_sales: []
     });
     const [loading, setLoading] = useState(true);
@@ -19,14 +23,7 @@ export default function SellerDashboard() {
 
     const fetchSellerData = async () => {
         try {
-            const token = localStorage.getItem('authToken');
-            const res = await fetch('/api/products/seller-dashboard/', {
-                method: 'GET',
-                headers: {
-                    'Authorization': token ? `Token ${token}` : '',
-                    'Content-Type': 'application/json'
-                }
-            });
+            const res = await api('/api/products/seller-dashboard/');
 
             if (res.ok) {
                 const data = await res.json();
@@ -117,6 +114,40 @@ export default function SellerDashboard() {
                         Fulfilled
                     </span>
                 </div>
+            </div>
+
+            {/* Seller Rating Summary */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden p-6 md:p-8 mb-10">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                        <h2 className="text-xl font-bold text-gray-800">Buyer Ratings</h2>
+                        {dashboardData.avg_rating != null ? (
+                            <div className="flex items-center gap-3 mt-2">
+                                <span className="text-3xl font-black text-amber-500">★ {dashboardData.avg_rating}</span>
+                                <span className="text-sm text-gray-500">from {dashboardData.rating_count} buyer rating{dashboardData.rating_count === 1 ? '' : 's'}</span>
+                            </div>
+                        ) : (
+                            <p className="text-sm text-gray-500 mt-1">No buyer ratings yet — they appear after your items are delivered and rated.</p>
+                        )}
+                    </div>
+                </div>
+
+                {dashboardData.recent_ratings && dashboardData.recent_ratings.length > 0 && (
+                    <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {dashboardData.recent_ratings.map((r, idx) => (
+                            <div key={idx} className="border border-gray-100 rounded-xl p-4 bg-gray-50">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-amber-500 text-sm tracking-wide">
+                                        {'★'.repeat(r.stars)}<span className="text-gray-300">{'★'.repeat(5 - r.stars)}</span>
+                                    </span>
+                                    <span className="text-xs text-gray-400 font-medium">@{r.buyer}</span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1 font-semibold truncate">{r.item_title}</p>
+                                {r.comment && <p className="text-sm text-gray-700 mt-1">“{r.comment}”</p>}
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Recent Sales Table */}

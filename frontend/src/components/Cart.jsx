@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { api } from '../api';
 
 export default function Cart() {
     const navigate = useNavigate();
@@ -12,14 +13,7 @@ export default function Cart() {
 
     const fetchCart = async () => {
         try {
-            const token = localStorage.getItem('authToken');
-            const res = await fetch('/api/products/cart/', {
-                method: 'GET',
-                headers: {
-                    'Authorization': token ? `Token ${token}` : '',
-                    'Content-Type': 'application/json'
-                }
-            });
+            const res = await api('/api/products/cart/', { method: 'GET' });
 
             if (res.ok) {
                 const data = await res.json();
@@ -37,14 +31,7 @@ export default function Cart() {
 
     const handleRemoveItem = async (cartItemId) => {
         try {
-            const token = localStorage.getItem('authToken');
-            const res = await fetch(`/api/products/cart/remove/${cartItemId}/`, {
-                method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Token ${token}` : '',
-                    'Content-Type': 'application/json'
-                }
-            });
+            const res = await api(`/api/products/cart/remove/${cartItemId}/`, { method: 'DELETE' });
 
             if (res.ok) {
                 fetchCart();

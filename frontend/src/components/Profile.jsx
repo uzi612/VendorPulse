@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../api';
+import RatingModal from './RatingModal';
 
 export default function Profile() {
     const [userInfo, setUserInfo] = useState({ username: '', email: '', date_joined: '' });
@@ -14,20 +16,17 @@ export default function Profile() {
     // State for separating active vs completed orders
     const [orderTab, setOrderTab] = useState('active');
 
+    // Rating modal state (holds the order item being rated, + its order id)
+    const [ratingItem, setRatingItem] = useState(null);
+
     useEffect(() => {
         fetchProfileAndListings();
     }, []);
 
     const fetchProfileAndListings = async () => {
         try {
-            const token = localStorage.getItem('authToken');
-            const headers = {
-                'Authorization': token ? `Token ${token}` : '',
-                'Content-Type': 'application/json'
-            };
-
             // 1. Fetch Profile, Orders, and Sales
-            const profileRes = await fetch('/api/accounts/profile/', { headers });
+            const profileRes = await api('/api/accounts/profile/');
             if (profileRes.ok) {
                 const data = await profileRes.json();
                 setUserInfo({
@@ -44,7 +43,7 @@ export default function Profile() {
             }
 
             // 2. Fetch User's Active Listings
-            const listingsRes = await fetch('/api/products/my-listings/', { headers });
+            const listingsRes = await api('/api/products/my-listings/');
             if (listingsRes.ok) {
                 const listingsData = await listingsRes.json();
                 setUserListings(Array.isArray(listingsData) ? listingsData : listingsData.results || []);
@@ -61,13 +60,8 @@ export default function Profile() {
         setSaving(true);
         setMessage('');
         try {
-            const token = localStorage.getItem('authToken');
-            const res = await fetch('/api/accounts/profile/', {
+            const res = await api('/api/accounts/profile/', {
                 method: 'PUT',
-                headers: { 
-                    'Authorization': token ? `Token ${token}` : '',
-                    'Content-Type': 'application/json' 
-                },
                 body: JSON.stringify(formData)
             });
             if (res.ok) {
@@ -78,6 +72,19 @@ export default function Profile() {
         } finally {
             setSaving(false);
         }
+    };
+
+    // Update the rated item in local state (stars just submitted)
+    const handleRated = (itemId, rating) => {
+        setOrders(prevOrders => prevOrders.map(order => ({
+            ...order,
+            items: (order.items || []).map(oi =>
+                oi.id === itemId
+                    ? { ...oi, seller_stars: rating.seller_stars, agent_stars: rating.agent_stars }
+                    : oi
+            ),
+        })));
+        setRatingItem(null);
     };
 
     if (loading) {
@@ -242,15 +249,41 @@ export default function Profile() {
                                                 </div>
 
                                                 {order.items && order.items.length > 0 && (
-                                                    <div className="py-3 space-y-2">
+                                                    <div className="py-3 space-y-3">
                                                         <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Items in this order:</p>
-                                                        <ul className="text-sm text-gray-700 space-y-1">
-                                                            {order.items.map((oi, idx) => (
-                                                                <li key={idx} className="flex justify-between">
-                                                                    <span>{oi.item_title}</span>
-                                                                    <span className="font-semibold">₹{oi.item_price}</span>
-                                                                </li>
-                                                            ))}
+                                                        <ul className="text-sm text-gray-700 space-y-2">
+                                                            {order.items.map((oi, idx) => {
+                                                                const canRateSeller = oi.status === 'DELIVERED' && oi.seller_stars == null;
+                                                                const canRateAgent = oi.status === 'DELIVERED' && oi.agent_username && oi.agent_stars == null;
+                                                                const showRateBtn = canRateSeller || canRateAgent;
+                                                                return (
+                                                                    <li key={oi.id ?? idx} className="flex flex-wrap justify-between items-center gap-2 border-b border-gray-50 pb-2 last:border-0 last:pb-0">
+                                                                        <div className="min-w-0">
+                                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                                <span className="font-medium">{oi.item_title}</span>
+                                                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{oi.status}</span>
+                                                                            </div>
+                                                                            <p className="text-[11px] text-gray-400 mt-0.5">
+                                                                                Sold by @{oi.seller_username}
+                                                                                {oi.agent_username && <> · Delivered by @{oi.agent_username}</>}
+                                                                                {oi.seller_stars != null && <> · Seller <span className="text-amber-500">{'★'.repeat(oi.seller_stars)}</span></>}
+                                                                                {oi.agent_stars != null && <> · Agent <span className="text-amber-500">{'★'.repeat(oi.agent_stars)}</span></>}
+                                                                            </p>
+                                                                        </div>
+                                                                        <div className="flex items-center gap-3 flex-shrink-0">
+                                                                            <span className="font-semibold">₹{oi.item_price}</span>
+                                                                            {showRateBtn && (
+                                                                                <button
+                                                                                    onClick={() => setRatingItem({ ...oi, order_id: order.id })}
+                                                                                    className="bg-amber-400 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition"
+                                                                                >
+                                                                                    ⭐ Rate
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                    </li>
+                                                                );
+                                                            })}
                                                         </ul>
                                                     </div>
                                                 )}
@@ -375,6 +408,14 @@ export default function Profile() {
                     </div>
                 </div>
             </div>
+
+            {ratingItem && (
+                <RatingModal
+                    orderItem={ratingItem}
+                    onClose={() => setRatingItem(null)}
+                    onRated={handleRated}
+                />
+            )}
         </div>
     );
 }

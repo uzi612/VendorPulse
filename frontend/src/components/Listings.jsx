@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../api';
+import { CITIES } from '../cities';
 
 export default function Listings() {
     const [userItems, setUserItems] = useState([]);
@@ -10,6 +12,7 @@ export default function Listings() {
         category: '',
         condition: '',
         location: '',
+        address: '',
         image: null
     });
 
@@ -19,13 +22,7 @@ export default function Listings() {
 
     const fetchUserListings = async () => {
         try {
-            const token = localStorage.getItem('authToken');
-            const res = await fetch('/api/products/my-listings/', {
-                method: 'GET',
-                headers: {
-                    'Authorization': token ? `Token ${token}` : ''
-                }
-            });
+            const res = await api('/api/products/my-listings/', { method: 'GET' });
             const data = await res.json();
             setUserItems(Array.isArray(data) ? data : data.results || []);
         } catch (err) {
@@ -49,12 +46,8 @@ export default function Listings() {
         });
 
         try {
-            const token = localStorage.getItem('authToken');
-            const res = await fetch('/api/products/items/', {
+            const res = await api('/api/products/items/', {
                 method: 'POST',
-                headers: {
-                    'Authorization': token ? `Token ${token}` : ''
-                },
                 body: data
             });
             if (res.ok) {
@@ -70,14 +63,7 @@ export default function Listings() {
         if (!window.confirm("Are you sure you want to delete this listing?")) return;
 
         try {
-            const token = localStorage.getItem('authToken');
-            const res = await fetch(`/api/products/items/${id}/`, {
-                method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Token ${token}` : '',
-                    'Content-Type': 'application/json'
-                }
-            });
+            const res = await api(`/api/products/items/${id}/`, { method: 'DELETE' });
 
             if (res.ok || res.status === 204) {
                 // Refresh local items state
@@ -117,8 +103,15 @@ export default function Listings() {
                                 <input type="number" name="price" value={formData.price} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                             </div>
                             <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1">Location</label>
-                                <input type="text" name="location" value={formData.location} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">City</label>
+                                <select name="location" value={formData.location} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+                                    <option value="">Select City</option>
+                                    {CITIES.map(city => <option key={city} value={city}>{city}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Pickup Address</label>
+                                <input type="text" name="address" value={formData.address} onChange={handleChange} placeholder="Street / area for agent pickup" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                             </div>
                             <div>
                                 <label className="block text-sm font-semibold text-gray-700 mb-1">Image</label>

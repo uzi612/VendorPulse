@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { api } from '../api';
+import { CITIES } from '../cities';
 
 export default function Checkout() {
     const navigate = useNavigate();
@@ -8,19 +10,14 @@ export default function Checkout() {
     const [formData, setFormData] = useState({
         full_name: '',
         phone: '',
+        city: '',
         address: ''
     });
 
     useEffect(() => {
         const fetchCartData = async () => {
             try {
-                const token = localStorage.getItem('authToken');
-                const res = await fetch('/api/products/cart/', {
-                    headers: {
-                        'Authorization': token ? `Token ${token}` : '',
-                        'Content-Type': 'application/json'
-                    }
-                });
+                const res = await api('/api/products/cart/');
 
                 if (res.ok) {
                     const data = await res.json();
@@ -48,20 +45,15 @@ export default function Checkout() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         try {
-            const token = localStorage.getItem('authToken');
-            const res = await fetch('/api/products/checkout/', {
+            const res = await api('/api/products/checkout/', {
                 method: 'POST',
-                headers: {
-                    'Authorization': token ? `Token ${token}` : '',
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify(formData)
             });
 
             const data = await res.json();
             if (res.ok) {
                 const orderId = data.order_id || data.id;
-                navigate(`/products/success/${orderId}/`);
+                navigate(`/orders/success/${orderId}/`);
             } else {
                 console.error("Checkout submission failed", data);
             }
@@ -94,7 +86,14 @@ export default function Checkout() {
                                 <input type="tel" required placeholder="10-digit mobile number" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
                             </div>
                             <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1">Delivery Address / City</label>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">City</label>
+                                <select required value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white">
+                                    <option value="">Select City</option>
+                                    {CITIES.map(city => <option key={city} value={city}>{city}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Delivery Address</label>
                                 <textarea rows="3" required placeholder="Enter street address..." value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
                             </div>
                         </div>

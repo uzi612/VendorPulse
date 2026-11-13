@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import NotificationsBell from './NotificationsBell';
 
 export default function Navbar({ children, isAuthenticated, onLogout }) {
     return (
@@ -24,6 +25,8 @@ export default function Navbar({ children, isAuthenticated, onLogout }) {
                         </div>
 
                         <div className="flex items-center space-x-4">
+                            {isAuthenticated && <NotificationsBell />}
+
                             <Link to="/products/listing/" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-semibold text-sm shadow-sm transition">
                                 + Sell Item
                             </Link>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { api } from '../api';
 
 const DELIVERY_STAGES = [
     { key: 'ORDER_PLACED', label: 'Order Placed', desc: 'Your order has been placed and confirmed.' },
@@ -22,14 +23,7 @@ export default function OrderTracking() {
         setError('');
         setOrderData(null);
 
-        const token = localStorage.getItem('authToken');
-
-        fetch(`/api/orders/track/${trackingNumber.trim()}/`, {
-            headers: {
-                'Authorization': `Token ${token}`,
-                'Content-Type': 'application/json'
-            }
-        })
+        api(`/api/orders/track/${trackingNumber.trim()}/`)
         .then(res => {
             if (!res.ok) {
                 throw new Error("Invalid Tracking Id");
