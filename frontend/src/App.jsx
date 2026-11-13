@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { api } from './api';
 import Navbar from './components/Navbar';
 import Home from './components/Home';
 import Products from './components/Products';
@@ -19,37 +20,49 @@ import AdminLogin from './components/AdminLogin';
 import AgentLogin from './components/AgentLogin';
 import OrderTracking from './components/OrderTracking';
 
-function RoleRoute({ allowedRole, redirectPath, children }) {
-  const token = localStorage.getItem('authToken');
-  const userRole = localStorage.getItem('userRole');
-
-  if (!token || userRole !== allowedRole) {
+// Session-based guard: asks App whether the server-side session is active
+// and carries the required role. Real enforcement still happens in Django.
+function RoleRoute({ allowedRole, redirectPath, auth, children }) {
+  if (auth.loading) {
+    return <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>Checking session...</div>;
+  }
+  if (!auth.isAuthed || auth.role !== allowedRole) {
     return <Navigate to={redirectPath} replace />;
   }
   return children;
 }
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem('authToken') ? true : false;
-  });
+  // Auth state now lives in the Django session (cookie), mirrored here in React state.
+  const [auth, setAuth] = useState({ loading: true, isAuthed: false, role: null });
+
+  const refreshAuth = async () => {
+    try {
+      const res = await api('/api/accounts/me/');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.authenticated) {
+          setAuth({ loading: false, isAuthed: true, role: data.role || 'customer' });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Session check failed', err);
+    }
+    setAuth({ loading: false, isAuthed: false, role: null });
+  };
+
+  useEffect(() => {
+    refreshAuth(); // also bootstraps the csrftoken cookie for later writes
+  }, []);
 
   const handleLogout = async () => {
     try {
-      const token = localStorage.getItem('authToken');
-      await fetch('/api/accounts/logout/', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Token ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
+      await api('/api/accounts/logout/', { method: 'POST' });
     } catch (err) {
-      console.error("Logout request failed", err);
+      console.error('Logout request failed', err);
     } finally {
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('userRole');
-      setIsAuthenticated(false);
+      await refreshAuth();
       window.location.href = '/accounts/login/';
     }
   };
@@ -58,16 +71,16 @@ export default function App() {
     <Router>
       <Routes>
         {/* Standalone Authentication Portals */}
-        <Route path="/accounts/login/" element={<Login setIsAuthenticated={setIsAuthenticated} />} />
-        <Route path="/accounts/register/" element={<Register setIsAuthenticated={setIsAuthenticated} />} />
-        <Route path="/admin/login/" element={<AdminLogin setIsAuthenticated={setIsAuthenticated} />} />
-        <Route path="/agent/login/" element={<AgentLogin setIsAuthenticated={setIsAuthenticated} />} />
+        <Route path="/accounts/login/" element={<Login onLoginSuccess={refreshAuth} />} />
+        <Route path="/accounts/register/" element={<Register onLoginSuccess={refreshAuth} />} />
+        <Route path="/admin/login/" element={<AdminLogin onLoginSuccess={refreshAuth} />} />
+        <Route path="/agent/login/" element={<AgentLogin onLoginSuccess={refreshAuth} />} />
 
         {/* Protected Admin & Agent Dashboards (Standalone Top-Header Layout) */}
         <Route
           path="/admin/deliveries/"
           element={
-            <RoleRoute allowedRole="admin" redirectPath="/admin/login/">
+            <RoleRoute allowedRole="admin" redirectPath="/admin/login/" auth={auth}>
               <AdminDeliveries onLogout={handleLogout} />
             </RoleRoute>
           }
@@ -75,7 +88,7 @@ export default function App() {
         <Route
           path="/agent/dashboard/"
           element={
-            <RoleRoute allowedRole="agent" redirectPath="/agent/login/">
+            <RoleRoute allowedRole="agent" redirectPath="/agent/login/" auth={auth}>
               <AgentDashboard onLogout={handleLogout} />
             </RoleRoute>
           }
@@ -83,9 +96,9 @@ export default function App() {
 
         {/* Customer Marketplace Routes */}
         <Route path="/*" element={
-          <Navbar isAuthenticated={isAuthenticated} onLogout={handleLogout}>
+          <Navbar isAuthenticated={auth.isAuthed} onLogout={handleLogout}>
             <Routes>
-              <Route path="/" element={<Home isAuthenticated={isAuthenticated} />} />
+              <Route path="/" element={<Home isAuthenticated={auth.isAuthed} />} />
               <Route path="/products/" element={<Products />} />
               <Route path="/products/:id/" element={<ViewListing />} />
               <Route path="/products/listing/" element={<Listings />} />
