@@ -3,10 +3,11 @@ from .views import *
 
 urlpatterns = [
     # Buyer order endpoints
-    path('', order_list_api, name='api_order_list'),
-    path('<int:pk>/', order_detail_api, name='api_order_detail'),
-
-    # Seller sales endpoints
-    path('sales/', seller_sales_api, name='api_seller_sales'),
-    path('sales/item/<int:pk>/status/', update_order_item_status_api, name='api_update_order_item_status'),
+    path('success/<int:order_id>/', order_success_api, name='order_success'),
+    path('track/<str:tracking_number>/', track_order_item_api, name='track_order_item'),
+    # Buyer rates the seller / delivery agent for one delivered item
+    path('items/<int:order_item_id>/rate/', rate_order_item_api, name='rate_order_item'),
+    # Buyer cancels before pickup / opens a dispute after delivery
+    path('items/<int:order_item_id>/cancel/', cancel_order_item_api, name='cancel_order_item'),
+    path('items/<int:order_item_id>/dispute/', open_dispute_api, name='open_dispute'),
 ]

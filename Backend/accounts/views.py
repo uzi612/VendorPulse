@@ -1,15 +1,17 @@
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import authenticate, login, logout
 from django.views.decorators.csrf import ensure_csrf_cookie
+from vendorpulse_core.throttles import LoginThrottle, RegisterThrottle
 from .serializers import RegisterSerializer, UserSerializer
 from .models import Profile
 from orders.models import Order, OrderItem
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([RegisterThrottle])
 def register_view(request):
     serializer = RegisterSerializer(data=request.data)
     if serializer.is_valid():
@@ -24,6 +26,7 @@ def register_view(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
 def login_view(request):
     username = request.data.get('username')
     password = request.data.get('password')
@@ -83,27 +86,48 @@ def user_profile_api(request):
         profile.city = request.data.get('city', profile.city)
         profile.save()
         
-    # Serialize orders for the profile page view.
-    # prefetch_related('items') makes this 2 queries total instead of
-    # 2 queries PER order (.first() + .all() in the old loop).
-    orders_qs = Order.objects.filter(user=user).prefetch_related('items').order_by('-created_at')
+    # Orders + their items in TWO queries total (grouped in Python), each item
+    # carrying its seller/agent/rating via select_related.
+    orders_qs = list(Order.objects.filter(user=user).order_by('-created_at'))
+    items_by_order = {}
+    for i in OrderItem.objects.filter(order__user=user).select_related(
+            'seller', 'assigned_agent', 'rating', 'dispute').order_by('id'):
+        items_by_order.setdefault(i.order_id, []).append(i)
+
     orders = []
     for o in orders_qs:
-        order_items = list(o.items.all())  # served from the prefetch cache
+        order_items = items_by_order.get(o.id, [])
         orders.append({
             "id": o.id,
             "total_price": o.total_price,
             "created_at": o.created_at.strftime("%d %b %Y, %I:%M %p"),
             "status": order_items[0].status if order_items else "ORDER_PLACED",
-            "items": [{"item_title": i.item_title, "item_price": i.item_price} for i in order_items]
+            "items": [{
+                "id": i.id,
+                "item_title": i.item_title,
+                "item_price": i.item_price,
+                "status": i.status,
+                "seller_username": i.seller.username,
+                "agent_username": i.assigned_agent.username if i.assigned_agent else None,
+                "seller_stars": getattr(getattr(i, 'rating', None), 'seller_stars', None),
+                "agent_stars": getattr(getattr(i, 'rating', None), 'agent_stars', None),
+                "cancel_reason": i.cancel_reason,
+                "dispute": ({
+                    "id": i.dispute.id,
+                    "status": i.dispute.status,
+                    "reason": i.dispute.reason,
+                    "resolution_note": i.dispute.resolution_note,
+                } if getattr(i, 'dispute', None) else None),
+            } for i in order_items]
         })
 
-    # Serialize sales for the seller items sold view
     sales = [{
         "id": s.id,
         "item_title": s.item_title,
         "item_price": s.item_price,
         "status": s.status,
+        "cancel_reason": s.cancel_reason,
+        "cancel_note": s.cancel_note,
         "buyer": s.order.user.username,
         "shipping_address": s.order.shipping_address,
         "created_at": s.order.created_at.strftime("%d %b %Y, %I:%M %p")
@@ -123,10 +147,11 @@ def user_profile_api(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
 def role_login_api(request):
     username = request.data.get('username')
     password = request.data.get('password')
-    expected_role = request.data.get('role')  # 'admin' or 'agent'
+    expected_role = request.data.get('role')  
 
     user = authenticate(username=username, password=password)
     if not user:
