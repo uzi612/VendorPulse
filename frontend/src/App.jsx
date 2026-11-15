@@ -1,28 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { api } from './api';
 import Navbar from './components/Navbar';
-import Home from './components/Home';
-import Products from './components/Products';
-import Listings from './components/Listings';
-import Cart from './components/Cart';
-import Login from './components/Login';
-import Register from './components/Register';
-import ViewListing from './components/ViewListing';
-import Checkout from './components/Checkout';
-import CheckoutSuccess from './components/CheckoutSuccess';
-import Profile from './components/Profile';
-import SellerDashboard from './components/SellerDashboard';
-import EditListing from './components/EditListing';
-import AdminDeliveries from './components/AdminDeliveries';
-import AgentDashboard from './components/AgentDashboard';
-import AdminLogin from './components/AdminLogin';
-import AgentLogin from './components/AgentLogin';
-import OrderTracking from './components/OrderTracking';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import Home from './features/marketplace/Home';
+import Products from './features/marketplace/Products';
+import PostListing from './features/seller/PostListing';
+import Cart from './features/marketplace/Cart';
+import Login from './features/auth/Login';
+import Register from './features/auth/Register';
+import PortalLogin from './features/auth/PortalLogin';
+import ViewListing from './features/marketplace/ViewListing';
+import Checkout from './features/marketplace/Checkout';
+import CheckoutSuccess from './features/marketplace/CheckoutSuccess';
+import Profile from './features/profile/Profile';
+import SellerDashboard from './features/seller/SellerDashboard';
+import EditListing from './features/seller/EditListing';
+import AdminPortal from './features/admin/AdminPortal';
+import AgentDashboard from './features/agent/AgentDashboard';
+import OrderTracking from './features/marketplace/OrderTracking';
 
-// Session-based guard: asks App whether the server-side session is active
-// and carries the required role. Real enforcement still happens in Django.
-function RoleRoute({ allowedRole, redirectPath, auth, children }) {
+// Session-based guard: asks the AuthContext whether the server-side session
+// is active and carries the required role. Real enforcement still happens
+// in Django.
+function RoleRoute({ allowedRole, redirectPath, children }) {
+  const { auth } = useAuth();
   if (auth.loading) {
     return <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>Checking session...</div>;
   }
@@ -33,39 +34,7 @@ function RoleRoute({ allowedRole, redirectPath, auth, children }) {
 }
 
 export default function App() {
-  // Auth state now lives in the Django session (cookie), mirrored here in React state.
-  const [auth, setAuth] = useState({ loading: true, isAuthed: false, role: null });
-
-  const refreshAuth = async () => {
-    try {
-      const res = await api('/api/accounts/me/');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.authenticated) {
-          setAuth({ loading: false, isAuthed: true, role: data.role || 'customer' });
-          return;
-        }
-      }
-    } catch (err) {
-      console.error('Session check failed', err);
-    }
-    setAuth({ loading: false, isAuthed: false, role: null });
-  };
-
-  useEffect(() => {
-    refreshAuth(); // also bootstraps the csrftoken cookie for later writes
-  }, []);
-
-  const handleLogout = async () => {
-    try {
-      await api('/api/accounts/logout/', { method: 'POST' });
-    } catch (err) {
-      console.error('Logout request failed', err);
-    } finally {
-      await refreshAuth();
-      window.location.href = '/accounts/login/';
-    }
-  };
+  const { auth, refreshAuth, logout } = useAuth();
 
   return (
     <Router>
@@ -73,35 +42,35 @@ export default function App() {
         {/* Standalone Authentication Portals */}
         <Route path="/accounts/login/" element={<Login onLoginSuccess={refreshAuth} />} />
         <Route path="/accounts/register/" element={<Register onLoginSuccess={refreshAuth} />} />
-        <Route path="/admin/login/" element={<AdminLogin onLoginSuccess={refreshAuth} />} />
-        <Route path="/agent/login/" element={<AgentLogin onLoginSuccess={refreshAuth} />} />
+        <Route path="/admin/login/" element={<PortalLogin role="admin" onLoginSuccess={refreshAuth} />} />
+        <Route path="/agent/login/" element={<PortalLogin role="agent" onLoginSuccess={refreshAuth} />} />
 
         {/* Protected Admin & Agent Dashboards (Standalone Top-Header Layout) */}
         <Route
           path="/admin/deliveries/"
           element={
-            <RoleRoute allowedRole="admin" redirectPath="/admin/login/" auth={auth}>
-              <AdminDeliveries onLogout={handleLogout} />
+            <RoleRoute allowedRole="admin" redirectPath="/admin/login/">
+              <AdminPortal onLogout={logout} />
             </RoleRoute>
           }
         />
         <Route
           path="/agent/dashboard/"
           element={
-            <RoleRoute allowedRole="agent" redirectPath="/agent/login/" auth={auth}>
-              <AgentDashboard onLogout={handleLogout} />
+            <RoleRoute allowedRole="agent" redirectPath="/agent/login/">
+              <AgentDashboard onLogout={logout} />
             </RoleRoute>
           }
         />
 
         {/* Customer Marketplace Routes */}
         <Route path="/*" element={
-          <Navbar isAuthenticated={auth.isAuthed} onLogout={handleLogout}>
+          <Navbar isAuthenticated={auth.isAuthed} onLogout={logout}>
             <Routes>
               <Route path="/" element={<Home isAuthenticated={auth.isAuthed} />} />
               <Route path="/products/" element={<Products />} />
               <Route path="/products/:id/" element={<ViewListing />} />
-              <Route path="/products/listing/" element={<Listings />} />
+              <Route path="/products/listing/" element={<PostListing />} />
               <Route path="/products/listing/edit/:id/" element={<EditListing />} />
               <Route path="/products/seller-dashboard/" element={<SellerDashboard />} />
               <Route path="/orders/cart/" element={<Cart />} />

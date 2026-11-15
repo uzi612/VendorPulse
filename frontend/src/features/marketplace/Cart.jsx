@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../api';
+import { api } from '../../api';
 
 export default function Cart() {
     const navigate = useNavigate();

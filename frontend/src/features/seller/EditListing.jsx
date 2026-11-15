@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { api } from '../api';
-import { CITIES } from '../cities';
+import { api } from '../../api';
+import { CITIES } from '../../cities';
 
 export default function EditListing() {
     const { id } = useParams();
@@ -100,6 +100,7 @@ export default function EditListing() {
             });
 
             if (res.ok) {
+                alert('Listing updated! It has been submitted for admin review and will appear on the marketplace once approved.');
                 navigate('/products/listing/');
             } else {
                 const errData = await res.json();

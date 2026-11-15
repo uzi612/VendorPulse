@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../api';
-import NotificationsBell from './NotificationsBell';
+import { api } from '../../api';
+import NotificationsBell from '../../components/NotificationsBell';
+import { STATUS_LABELS } from '../../constants/status';
 
 export default function AgentDashboard({ onLogout }) {
     const [activeTab, setActiveTab] = useState('orders');
@@ -16,13 +17,17 @@ export default function AgentDashboard({ onLogout }) {
     const [otpError, setOtpError] = useState(null);
     const [otpSubmitting, setOtpSubmitting] = useState(false);
 
-    const statusChoices = [
-        { value: 'ORDER_PLACED', label: 'Order Placed' },
-        { value: 'PICKUP_SCHEDULED', label: 'Pickup Scheduled' },
-        { value: 'PICKED_UP', label: 'Picked Up from Seller' },
-        { value: 'DISPATCHED', label: 'In Transit / Dispatched' },
-        { value: 'DELIVERED', label: 'Delivered to Buyer' }
-    ];
+    // Fulfillment cycle for agents (server enforces the same ladder):
+    //   Pickup Scheduled (visible, set by assignment) -> Picked Up -> In
+    //   Transit -> Delivered (OTP). ORDER_PLACED never reaches an agent.
+
+    // The ONE next step available from each active state — a single button
+    // per task instead of a dropdown, so skipping/backtracking is impossible.
+    const NEXT_STEP = {
+        'PICKUP_SCHEDULED': { next: 'PICKED_UP', label: '📦 Mark Picked Up from Seller', color: '#0284c7' },
+        'PICKED_UP': { next: 'DISPATCHED', label: '🚚 Mark In Transit / Dispatched', color: '#d97706' },
+        'DISPATCHED': { next: 'DELIVERED', label: '✅ Confirm Delivery (OTP)', color: '#16a34a' },
+    };
 
     const fetchAgentData = async () => {
         setLoading(true);
@@ -63,7 +68,10 @@ export default function AgentDashboard({ onLogout }) {
                 body: JSON.stringify({ status: newStatus })
             });
 
-            if (!response.ok) throw new Error('Failed to update status.');
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || errData.detail || 'Failed to update status.');
+            }
             fetchAgentData();
             alert('Delivery step updated successfully!');
         } catch (err) {
@@ -81,7 +89,7 @@ export default function AgentDashboard({ onLogout }) {
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) {
-                setOtpError(data.error || 'Failed to confirm delivery.');
+                setOtpError(data.error || data.detail || 'Failed to confirm delivery.');
                 return;
             }
             setOtpModal(null);
@@ -154,7 +162,7 @@ export default function AgentDashboard({ onLogout }) {
                                                 <div style={{ fontSize: '16px', fontWeight: '600', color: '#2563eb' }}>{task.item_title}</div>
                                             </div>
                                             <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: task.status === 'DELIVERED' ? '#dcfce7' : '#e0f2fe', color: task.status === 'DELIVERED' ? '#166534' : '#0369a1', fontSize: '12px', fontWeight: '600' }}>
-                                                {task.status}
+                                                {STATUS_LABELS[task.status] || task.status}
                                             </span>
                                         </div>
                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', margin: '16px 0', fontSize: '14px', color: '#475569' }}>
@@ -164,12 +172,28 @@ export default function AgentDashboard({ onLogout }) {
                                             <div><b>Tracking Number:</b> {task.tracking_number || 'N/A'}</div>
                                         </div>
                                         <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                                            <label style={{ fontSize: '14px', fontWeight: '600', color: '#0f172a' }}>Update Fulfillment Step:</label>
-                                            <select value={task.status} onChange={(e) => updateStatus(task.id, e.target.value)} style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontWeight: '500' }}>
-                                                {statusChoices.map(choice => (
-                                                    <option key={choice.value} value={choice.value}>{choice.label}</option>
-                                                ))}
-                                            </select>
+                                            {NEXT_STEP[task.status] ? (
+                                                <>
+                                                    <span style={{ fontSize: '13px', color: '#64748b' }}>
+                                                        Next step:
+                                                    </span>
+                                                    <button
+                                                        onClick={() => updateStatus(task.id, NEXT_STEP[task.status].next)}
+                                                        style={{
+                                                            padding: '10px 16px', borderRadius: '6px', border: 'none',
+                                                            backgroundColor: NEXT_STEP[task.status].color,
+                                                            color: '#ffffff', fontWeight: '600', fontSize: '13px',
+                                                            cursor: 'pointer',
+                                                        }}
+                                                    >
+                                                        {NEXT_STEP[task.status].label}
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <span style={{ fontSize: '13px', color: '#16a34a', fontWeight: '600' }}>
+                                                    ✓ Fulfillment complete — nothing left to do
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 ))}

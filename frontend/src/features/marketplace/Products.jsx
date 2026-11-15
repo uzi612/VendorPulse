@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CITIES } from '../cities';
+import { CITIES } from '../../cities';
 
 export default function Products() {
     const [items, setItems] = useState([]);

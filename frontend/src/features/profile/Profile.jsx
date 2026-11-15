@@ -1,0 +1,287 @@
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { api } from '../../api';
+import OrdersAccordion from './OrdersAccordion';
+import SalesList from './SalesList';
+
+// Profile page shell: profile header + update form + My Listings accordion.
+// Orders live in OrdersAccordion.jsx, sales in SalesList.jsx — but everything
+// still comes from ONE /api/accounts/profile/ fetch here, exactly like before
+// the split.
+export default function Profile() {
+    const [userInfo, setUserInfo] = useState({ username: '', email: '', date_joined: '' });
+    const [formData, setFormData] = useState({ phone: '', city: '' });
+    const [orders, setOrders] = useState([]);
+    const [userListings, setUserListings] = useState([]);
+    const [userSales, setUserSales] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [message, setMessage] = useState('');
+
+    useEffect(() => {
+        fetchProfileAndListings();
+    }, []);
+
+    const fetchProfileAndListings = async () => {
+        try {
+            // 1. Fetch Profile, Orders, and Sales
+            const profileRes = await api('/api/accounts/profile/');
+            if (profileRes.ok) {
+                const data = await profileRes.json();
+                setUserInfo({
+                    username: data.username || '',
+                    email: data.email || '',
+                    date_joined: data.date_joined || ''
+                });
+                setFormData({
+                    phone: data.profile?.phone || data.phone || '',
+                    city: data.profile?.city || data.city || ''
+                });
+                setOrders(data.orders || []);
+                setUserSales(data.sales || []);
+            }
+
+            // 2. Fetch User's Active Listings
+            const listingsRes = await api('/api/products/my-listings/');
+            if (listingsRes.ok) {
+                const listingsData = await listingsRes.json();
+                setUserListings(Array.isArray(listingsData) ? listingsData : listingsData.results || []);
+            }
+        } catch (err) {
+            console.error("Error loading profile data:", err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleUpdateProfile = async (e) => {
+        e.preventDefault();
+        setSaving(true);
+        setMessage('');
+        try {
+            const res = await api('/api/accounts/profile/', {
+                method: 'PUT',
+                body: JSON.stringify(formData)
+            });
+            if (res.ok) {
+                setMessage('Profile updated successfully!');
+            }
+        } catch (err) {
+            console.error("Failed to update profile:", err);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // Update the rated item in local state (stars just submitted)
+    const handleRated = (itemId, rating) => {
+        setOrders(prevOrders => prevOrders.map(order => ({
+            ...order,
+            items: (order.items || []).map(oi =>
+                oi.id === itemId
+                    ? { ...oi, seller_stars: rating.seller_stars, agent_stars: rating.agent_stars }
+                    : oi
+            ),
+        })));
+    };
+
+    // Move the cancelled item into its new state locally (server confirmed)
+    const handleCancelled = (itemId, item) => {
+        setOrders(prevOrders => prevOrders.map(order => ({
+            ...order,
+            items: (order.items || []).map(oi =>
+                oi.id === itemId
+                    ? { ...oi, status: 'CANCELLED', cancel_reason: item.cancel_reason }
+                    : oi
+            ),
+        })));
+    };
+
+    // Attach the freshly filed dispute to the item locally (server confirmed)
+    const handleDisputed = (itemId, dispute) => {
+        setOrders(prevOrders => prevOrders.map(order => ({
+            ...order,
+            items: (order.items || []).map(oi =>
+                oi.id === itemId ? { ...oi, dispute } : oi
+            ),
+        })));
+    };
+
+    if (loading) {
+        return <div className="max-w-7xl mx-auto px-4 py-16 text-center text-gray-500">Loading profile...</div>;
+    }
+
+    return (
+        <div className="max-w-7xl mx-auto px-4 py-8">
+            {/* Profile Header */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 md:p-8 mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div>
+                    <span className="bg-indigo-50 text-indigo-600 text-xs px-3 py-1 rounded-full font-bold uppercase tracking-wide">
+                        Member Account
+                    </span>
+                    <h1 className="text-3xl font-black text-gray-900 tracking-tight mt-2">
+                        @{userInfo.username || 'Member'}
+                    </h1>
+                    <p className="text-gray-500 text-sm mt-0.5">
+                        {userInfo.email} {userInfo.date_joined && `• Joined ${userInfo.date_joined}`}
+                    </p>
+                </div>
+
+                {/* Header Action Links & Delivery Badge */}
+                <div className="flex flex-wrap items-center justify-between gap-4 bg-white border border-gray-100 p-4 rounded-2xl shadow-sm">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Link
+                            to="/products/seller-dashboard/"
+                            className="inline-flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-4 py-2.5 rounded-xl transition shadow-sm"
+                        >
+                            📊 View Seller Dashboard
+                        </Link>
+                        <Link
+                            to="/orders/track/"
+                            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2.5 rounded-xl shadow-sm hover:shadow transition-all text-xs tracking-wide"
+                        >
+                            <span>📦 Track Order</span>
+                        </Link>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-xs bg-emerald-50 text-emerald-700 px-3.5 py-2 rounded-xl font-bold border border-emerald-100 shadow-2xs">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            VendorPulse Delivery Active 🚚
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Left Column: Update Profile Form */}
+                <div className="lg:col-span-1">
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sticky top-24">
+                        <h2 className="text-xl font-bold text-gray-800 mb-4">Update Profile</h2>
+
+                        {message && (
+                            <div className="mb-4 p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold rounded-lg">
+                                {message}
+                            </div>
+                        )}
+
+                        <form onSubmit={handleUpdateProfile} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Username</label>
+                                <input
+                                    type="text"
+                                    value={userInfo.username}
+                                    disabled
+                                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-500 cursor-not-allowed"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Phone Number</label>
+                                <input
+                                    type="text"
+                                    value={formData.phone}
+                                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                                    placeholder="Enter phone"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">City / Location</label>
+                                <input
+                                    type="text"
+                                    value={formData.city}
+                                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                                    placeholder="Enter city"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                />
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={saving}
+                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl shadow-sm transition"
+                            >
+                                {saving ? 'Saving...' : 'Save Changes'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                {/* Right 2 Columns: Accordions */}
+                <div className="lg:col-span-2 space-y-6">
+                    {/* 1. Past Orders Accordion (Separated Active vs Completed) */}
+                    <OrdersAccordion
+                        orders={orders}
+                        onRated={handleRated}
+                        onCancelled={handleCancelled}
+                        onDisputed={handleDisputed}
+                    />
+
+                    {/* 2. My Listed Items Accordion */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                        <details className="group p-6 md:p-8" open>
+                            <summary className="flex justify-between items-center cursor-pointer list-none select-none">
+                                <div className="flex items-center gap-3">
+                                    <h2 className="text-xl font-bold text-gray-800">My Listed Items</h2>
+                                    <span className="bg-gray-100 text-gray-700 text-xs font-bold px-2.5 py-0.5 rounded-full">
+                                        {userListings.length}
+                                    </span>
+                                </div>
+                                <span className="transform group-open:rotate-180 transition duration-200 text-indigo-600 font-bold">▼</span>
+                            </summary>
+
+                            <div className="mt-6 pt-6 border-t border-gray-100">
+                                {userListings.length > 0 ? (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        {userListings.map((item) => (
+                                            <div key={item.id} className="border border-gray-200 rounded-xl p-4 flex gap-4 items-center">
+                                                <div className="w-16 h-16 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
+                                                    {item.image ? (
+                                                        <img src={item.image} alt={item.title} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">No img</div>
+                                                    )}
+                                                </div>
+                                                <div className="flex-grow min-w-0">
+                                                    <h4 className="font-bold text-gray-800 text-sm truncate">{item.title}</h4>
+                                                    <p className="text-emerald-600 font-bold text-sm">₹{item.price}</p>
+                                                    {item.approval_status === 'PENDING' && (
+                                                        <p className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded mt-1 w-fit">
+                                                            ⏳ Pending Review — not yet visible to buyers
+                                                        </p>
+                                                    )}
+                                                    {item.approval_status === 'REJECTED' && (
+                                                        <p className="text-[10px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded mt-1 w-fit" title={item.rejection_reason || ''}>
+                                                            ✕ Rejected{item.rejection_reason ? `: ${item.rejection_reason}` : ''}
+                                                        </p>
+                                                    )}
+                                                    <div className="flex gap-3 mt-1">
+                                                        <Link to={`/products/${item.id}/`} className="text-xs text-indigo-600 font-semibold hover:underline">
+                                                            View
+                                                        </Link>
+                                                        <Link to={`/products/listing/edit/${item.id}/`} className="text-xs text-gray-600 font-semibold hover:underline">
+                                                            {item.approval_status === 'REJECTED' ? 'Edit & Resubmit' : 'Edit'}
+                                                        </Link>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center py-12 border-2 border-dashed border-gray-100 rounded-xl">
+                                        <p className="text-gray-400 text-sm">You haven't listed any items for sale yet.</p>
+                                    </div>
+                                )}
+                            </div>
+                        </details>
+                    </div>
+
+                    {/* 3. Items Sold Accordion */}
+                    <SalesList sales={userSales} />
+                </div>
+            </div>
+        </div>
+    );
+}

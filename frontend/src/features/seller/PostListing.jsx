@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api';
-import { CITIES } from '../cities';
+import { api } from '../../api';
+import { CITIES } from '../../cities';
 
 export default function Listings() {
     const [userItems, setUserItems] = useState([]);
@@ -51,6 +51,7 @@ export default function Listings() {
                 body: data
             });
             if (res.ok) {
+                alert('Listing posted! It is awaiting admin review and will appear on the marketplace once approved.');
                 setFormData({ title: '', description: '', price: '', category: '', condition: '', location: '', image: null });
                 fetchUserListings();
             }

@@ -1,13 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../api';
-
-const STATUS_LABELS = {
-    ORDER_PLACED: 'Order Placed (unassigned)',
-    PICKUP_SCHEDULED: 'Pickup Scheduled',
-    PICKED_UP: 'Picked Up',
-    DISPATCHED: 'In Transit',
-    DELIVERED: 'Delivered',
-};
+import { api } from '../../api';
+import { STATUS_LABELS, STATUS_BAR_COLORS } from '../../constants/status';
 
 
 const SUMMARY_CARDS = [
@@ -17,6 +10,7 @@ const SUMMARY_CARDS = [
     ['in_transit_items', 'In Transit', '#d97706'],
     ['awaiting_assignment', 'Awaiting Assignment', '#dc2626'],
     ['active_listings', 'Active Listings', '#7c3aed'],
+    ['pending_listings', 'Pending Review', '#d97706'],
     ['registered_users', 'Registered Users', '#0891b2'],
     ['total_agents', 'Delivery Agents', '#4f46e5'],
 ];
@@ -121,7 +115,7 @@ export default function AdminAnalytics() {
                     {status_breakdown.map(s => (
                         <Bar key={s.status} label={STATUS_LABELS[s.status] || s.status} right={s.count}
                              value={s.count} maxValue={maxStatus}
-                             color={s.status === 'DELIVERED' ? '#16a34a' : (s.status === 'ORDER_PLACED' ? '#dc2626' : '#d97706')} />
+                             color={STATUS_BAR_COLORS[s.status] || '#d97706'} />
                     ))}
                 </Panel>
 

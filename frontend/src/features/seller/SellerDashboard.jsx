@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../api';
+import { api } from '../../api';
 
 export default function SellerDashboard() {
     const navigate = useNavigate();
@@ -9,6 +9,8 @@ export default function SellerDashboard() {
         completed_payouts: 0,
         pending_payouts: 0,
         active_listings_count: 0,
+        pending_review_count: 0,
+        rejected_count: 0,
         sold_items_count: 0,
         avg_rating: null,
         rating_count: 0,
@@ -99,6 +101,11 @@ export default function SellerDashboard() {
                     <div>
                         <h4 className="text-gray-500 text-sm font-medium">Active Listings</h4>
                         <p className="text-2xl font-black text-gray-800 mt-1">{dashboardData.active_listings_count} Items</p>
+                        {dashboardData.pending_review_count > 0 && (
+                            <p className="text-xs font-semibold text-amber-600 mt-1">
+                                +{dashboardData.pending_review_count} awaiting admin review ⏳
+                            </p>
+                        )}
                     </div>
                     <Link to="/products/listing/" className="text-xs font-semibold text-indigo-600 hover:underline">
                         Manage Listings &rarr;
