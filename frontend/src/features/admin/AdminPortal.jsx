@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import NotificationsBell from '../../components/NotificationsBell';
 import OrdersTab from './tabs/OrdersTab';
 import StaffTab from './tabs/StaffTab';
@@ -12,8 +13,29 @@ import AdminAnalytics from './AdminAnalytics';
 // tab components) so it survives switching tabs — the same persistence the
 // pre-split monolith had. Tabs are mounted on demand; re-entering a tab
 // refetches its data from the server.
+// The ACTIVE tab is the URL path (/admin/staff/, /admin/analytics/, ...), so
+// tabs are deep-linkable and survive refresh — the URL is the state.
+// Nav definition (key doubles as the URL segment below)
+const NAV_TABS = [
+    { key: 'deliveries', label: '📦 Orders & Deliveries' },
+    { key: 'staff', label: '👥 Staff' },
+    { key: 'sellers', label: '🏪 Sellers' },
+    { key: 'disputes', label: '⚑ Disputes' },
+    { key: 'moderation', label: '🗂 Listings' },
+    { key: 'analytics', label: '📊 Analytics' },
+];
+
 export default function AdminPortal({ onLogout }) {
-    const [activeTab, setActiveTab] = useState('deliveries');
+    const location = useLocation();
+    const navigate = useNavigate();
+
+    // Active tab from the URL: /admin/<key>/ → key. Bare /admin/ falls
+    // through to the default deliveries tab; unknown paths redirect there.
+    const urlKey = location.pathname.split('/').filter(Boolean)[1];
+    const isValid = !urlKey || NAV_TABS.some(t => t.key === urlKey);
+    const activeTab = isValid && urlKey ? urlKey : 'deliveries';
+    const setActiveTab = (key) => navigate(`/admin/${key}/`);
+    if (!isValid) return <Navigate to="/admin/deliveries/" replace />;
 
     // Orders tab
     const [deliveryTab, setDeliveryTab] = useState('active'); // 'active' | 'completed' | 'cancelled'
@@ -32,22 +54,53 @@ export default function AdminPortal({ onLogout }) {
 
     return (
         <div style={{ minHeight: '100vh', backgroundColor: '#f8fafc' }}>
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 32px', backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
-                <h1 style={{ fontSize: '20px', fontWeight: 'bold', color: '#0f172a', margin: 0 }}>VendorPulse Admin Portal</h1>
+            {/* Top navbar: brand left, tab links center, actions right */}
+            <header
+                style={{
+                    position: 'sticky', top: 0, zIndex: 20,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '10px', flexWrap: 'wrap',
+                    padding: '10px 20px', backgroundColor: '#ffffff',
+                    borderBottom: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)',
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '19px', fontWeight: 'bold', color: '#0f172a' }}>VendorPulse</span>
+                    <span style={{
+                        padding: '3px 10px', backgroundColor: '#eef2ff', color: '#4f46e5',
+                        borderRadius: '999px', fontSize: '11px', fontWeight: '700', letterSpacing: '1px',
+                    }}>ADMIN</span>
+                </div>
+
+                <nav style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                    {NAV_TABS.map(tab => {
+                        const active = activeTab === tab.key;
+                        return (
+                            <button
+                                key={tab.key}
+                                onClick={() => setActiveTab(tab.key)}
+                                onMouseEnter={e => { if (!active) e.currentTarget.style.backgroundColor = '#f1f5f9'; }}
+                                onMouseLeave={e => { if (!active) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                                style={{
+                                    padding: '8px 14px', border: 'none', borderRadius: '8px',
+                                    backgroundColor: active ? '#eef2ff' : 'transparent',
+                                    color: active ? '#4f46e5' : '#64748b',
+                                    fontWeight: active ? '700' : '600',
+                                    fontSize: '13.5px', cursor: 'pointer',
+                                    transition: 'background-color 0.15s, color 0.15s',
+                                }}
+                            >
+                                {tab.label}
+                            </button>
+                        );
+                    })}
+                </nav>
+
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                     <NotificationsBell />
                     <button onClick={onLogout} style={{ padding: '8px 16px', backgroundColor: '#ef4444', color: '#ffffff', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>Logout</button>
                 </div>
             </header>
-
-            <div style={{ display: 'flex', gap: '16px', padding: '16px 32px', backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
-                <button onClick={() => setActiveTab('deliveries')} style={{ padding: '8px 16px', backgroundColor: activeTab === 'deliveries' ? '#0f172a' : 'transparent', color: activeTab === 'deliveries' ? '#ffffff' : '#64748b', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>Orders & Deliveries</button>
-                <button onClick={() => setActiveTab('staff')} style={{ padding: '8px 16px', backgroundColor: activeTab === 'staff' ? '#0f172a' : 'transparent', color: activeTab === 'staff' ? '#ffffff' : '#64748b', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>Staff Management</button>
-                <button onClick={() => setActiveTab('sellers')} style={{ padding: '8px 16px', backgroundColor: activeTab === 'sellers' ? '#0f172a' : 'transparent', color: activeTab === 'sellers' ? '#ffffff' : '#64748b', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>Sellers</button>
-                <button onClick={() => setActiveTab('disputes')} style={{ padding: '8px 16px', backgroundColor: activeTab === 'disputes' ? '#0f172a' : 'transparent', color: activeTab === 'disputes' ? '#ffffff' : '#64748b', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>⚑ Disputes</button>
-                <button onClick={() => setActiveTab('moderation')} style={{ padding: '8px 16px', backgroundColor: activeTab === 'moderation' ? '#0f172a' : 'transparent', color: activeTab === 'moderation' ? '#ffffff' : '#64748b', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>🗂 Listings</button>
-                <button onClick={() => setActiveTab('analytics')} style={{ padding: '8px 16px', backgroundColor: activeTab === 'analytics' ? '#0f172a' : 'transparent', color: activeTab === 'analytics' ? '#ffffff' : '#64748b', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>📊 Analytics</button>
-            </div>
 
             <main style={{ padding: '32px' }}>
                 {activeTab === 'deliveries' && (

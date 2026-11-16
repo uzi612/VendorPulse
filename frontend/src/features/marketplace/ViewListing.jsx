@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
+import { useToast } from '../../components/Toast';
 
 export default function ViewListing() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const toast = useToast();
     const [item, setItem] = useState(null);
     const [currentUser, setCurrentUser] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -30,19 +32,20 @@ export default function ViewListing() {
     const addToCart = async () => {
         try {
             if (!currentUser) {
-                alert("Please log in to add items to your cart.");
+                toast.error("Please log in to add items to your cart.");
                 return;
             }
 
             const res = await api(`/api/products/cart/add/${id}/`, { method: 'POST' });
 
             if (res.ok) {
+                toast.success("Added to cart!");
                 navigate('/orders/cart/');
             } else if (res.status === 401 || res.status === 403) {
-                alert("Your session has expired. Please log in again.");
+                toast.error("Your session has expired. Please log in again.");
             } else {
                 const errData = await res.json().catch(() => ({}));
-                alert(errData.error || errData.detail || "Failed to add item to cart.");
+                toast.error(errData.error || errData.detail || "Failed to add item to cart.");
             }
         } catch (err) {
             console.error("Error adding to cart", err);

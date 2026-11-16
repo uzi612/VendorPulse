@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { CITIES } from '../../cities';
+import { useToast } from '../../components/Toast';
 
 export default function Listings() {
+    const toast = useToast();
     const [userItems, setUserItems] = useState([]);
     const [formData, setFormData] = useState({
         title: '',
@@ -51,7 +53,7 @@ export default function Listings() {
                 body: data
             });
             if (res.ok) {
-                alert('Listing posted! It is awaiting admin review and will appear on the marketplace once approved.');
+                toast.success('Listing posted! It is awaiting admin review and will appear on the marketplace once approved.');
                 setFormData({ title: '', description: '', price: '', category: '', condition: '', location: '', image: null });
                 fetchUserListings();
             }

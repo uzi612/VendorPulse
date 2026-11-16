@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../../api';
 import { CITIES } from '../../../cities';
 import Pagination from '../../../components/Pagination';
+import { useToast } from '../../../components/Toast';
 
 // Orders & Deliveries tab: fulfillment table with agent assignment,
 // tracking numbers and shipping-detail editing. Sub-tab/page state is
 // lifted into AdminPortal so it survives switching tabs.
 export default function OrdersTab({ deliveryTab, setDeliveryTab, page, setPage }) {
+    const toast = useToast();
     const [deliveries, setDeliveries] = useState([]);
     const [deliveryMeta, setDeliveryMeta] = useState(null);   // {count, total_pages, page, page_size, active_count, completed_count, cancelled_count}
     const [loadingDeliveries, setLoadingDeliveries] = useState(true);
@@ -49,9 +51,9 @@ export default function OrdersTab({ deliveryTab, setDeliveryTab, page, setPage }
             if (!response.ok) throw new Error('Failed to assign delivery.');
             fetchDeliveries();
             setSelectedDeliveryId(null);
-            alert('Delivery updated successfully!');
+            toast.success('Delivery updated successfully!');
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
         }
     };
 
@@ -72,11 +74,11 @@ export default function OrdersTab({ deliveryTab, setDeliveryTab, page, setPage }
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to update order.');
-            alert('Order updated successfully!');
+            toast.success('Order updated successfully!');
             setEditingOrderId(null);
             fetchDeliveries();
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
         }
     };
 

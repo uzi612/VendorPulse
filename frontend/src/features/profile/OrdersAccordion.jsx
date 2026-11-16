@@ -105,7 +105,7 @@ export default function OrdersAccordion({ orders, onRated, onCancelled, onDisput
                                                                 </div>
                                                                 <p className="text-[11px] text-gray-400 mt-0.5">
                                                                     Sold by @{oi.seller_username}
-                                                                    {oi.agent_username && <> · Delivered by @{oi.agent_username}</>}
+                                                                    {oi.agent_username && <> · {oi.status === 'DELIVERED' ? 'Delivered by' : 'Agent'} @{oi.agent_username}</>}
                                                                     {oi.seller_stars != null && <> · Seller <span className="text-amber-500">{'★'.repeat(oi.seller_stars)}</span></>}
                                                                     {oi.agent_stars != null && <> · Agent <span className="text-amber-500">{'★'.repeat(oi.agent_stars)}</span></>}
                                                                     {oi.status === 'CANCELLED' && oi.cancel_reason && <> · Cancelled: <span className="text-red-500">{oi.cancel_reason.replaceAll('_', ' ').toLowerCase()}</span></>}

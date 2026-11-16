@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../../api';
 import Pagination from '../../../components/Pagination';
+import { useToast } from '../../../components/Toast';
 
 // Listing moderation queue: every seller listing waits for admin approval
 // before it appears on the marketplace. Approve / Reject (reason required,
 // shown to the seller). Status filter and page state are lifted into
 // AdminPortal so they survive switching tabs.
 export default function ModerationTab({ status, setStatus, page, setPage }) {
+    const toast = useToast();
     const [listings, setListings] = useState([]);
     const [listingMeta, setListingMeta] = useState(null);   // {count, total_pages, page, page_size, pending_count, approved_count, rejected_count}
     const [rejectingListingId, setRejectingListingId] = useState(null);
@@ -32,7 +34,7 @@ export default function ModerationTab({ status, setStatus, page, setPage }) {
 
     const handleListingDecision = async (itemId, decision) => {
         if (decision === 'REJECTED' && !rejectionReason.trim()) {
-            alert('A rejection reason is required — it is shown to the seller.');
+            toast.error('A rejection reason is required — it is shown to the seller.');
             return;
         }
         try {
@@ -45,12 +47,12 @@ export default function ModerationTab({ status, setStatus, page, setPage }) {
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to review listing.');
-            alert(`Listing ${decision.toLowerCase()} — the seller has been notified.`);
+            toast.success(`Listing ${decision.toLowerCase()} — the seller has been notified.`);
             setRejectingListingId(null);
             setRejectionReason('');
             fetchListings();
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
         }
     };
 

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../../api';
+import { useToast } from '../../../components/Toast';
 
 // Sellers directory, derived from the FULL deliveries list (fetched with
 // ?all=1 while this tab is open). Verification toggles refetch this list;
 // the Staff tab refetches its own data when it mounts.
 export default function SellersTab() {
+    const toast = useToast();
     const [allDeliveries, setAllDeliveries] = useState([]);
 
     useEffect(() => {
@@ -24,7 +26,7 @@ export default function SellersTab() {
 
     const toggleVerification = async (userId, currentStatus) => {
         if (!userId) {
-            alert("Error: User ID is missing.");
+            toast.error("User ID is missing — cannot update verification.");
             return;
         }
 
@@ -35,10 +37,11 @@ export default function SellersTab() {
             });
 
             if (res.ok) {
+                toast.success(!currentStatus ? "Seller verified ✓" : "Seller verification revoked");
                 fetchAllDeliveries();  // refresh this tab's verification badge
             } else {
                 const errData = await res.json().catch(() => ({}));
-                alert("Failed to update: " + (errData.error || "Unknown error"));
+                toast.error("Failed to update: " + (errData.error || "Unknown error"));
             }
         } catch (err) {
             console.error("Network or execution error:", err);

@@ -2,7 +2,8 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import NotificationsBell from './NotificationsBell';
 
-export default function Navbar({ children, isAuthenticated, onLogout }) {
+export default function Navbar({ children, isAuthenticated, loading, onLogout }) {
+    const sessionReady = !loading;
     return (
         <div className="bg-gray-50 min-h-screen flex flex-col font-sans text-gray-800">
             {/* Navigation Bar */}
@@ -19,30 +20,51 @@ export default function Navbar({ children, isAuthenticated, onLogout }) {
                         <div className="hidden md:flex space-x-6 items-center">
                             <Link to="/" className="text-gray-700 hover:text-indigo-600 font-medium transition">Home</Link>
                             <Link to="/products/" className="text-gray-700 hover:text-indigo-600 font-medium transition">Products</Link>
-                            <Link to="/products/listing/" className="text-gray-700 hover:text-indigo-600 font-medium transition">My Listings</Link>
-                            <Link to="/orders/cart/" className="text-gray-700 hover:text-indigo-600 font-medium transition flex items-center gap-1.5">Cart</Link>
-                            <Link to="/accounts/profile/" className="text-gray-700 hover:text-indigo-600 font-medium transition">Profile</Link>
+                            {/* Account-only links: hidden from guests instead of
+                                leading them to dead/redirected pages. */}
+                            {isAuthenticated && (
+                                <>
+                                    <Link to="/products/listing/" className="text-gray-700 hover:text-indigo-600 font-medium transition">My Listings</Link>
+                                    <Link to="/orders/cart/" className="text-gray-700 hover:text-indigo-600 font-medium transition flex items-center gap-1.5">Cart</Link>
+                                    <Link to="/accounts/profile/" className="text-gray-700 hover:text-indigo-600 font-medium transition">Profile</Link>
+                                </>
+                            )}
                         </div>
 
                         <div className="flex items-center space-x-4">
-                            {isAuthenticated && <NotificationsBell />}
-
-                            <Link to="/products/listing/" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-semibold text-sm shadow-sm transition">
-                                + Sell Item
-                            </Link>
-
-                            {isAuthenticated ? (
-                                <button 
-                                    onClick={onLogout}
-                                    className="text-sm font-medium text-gray-600 hover:text-red-600 transition"
-                                >
-                                    Logout
-                                </button>
-                            ) : (
-                                <div className="flex items-center space-x-3 text-sm font-medium">
-                                    <Link to="/accounts/login/" className="text-gray-600 hover:text-indigo-600 transition">Login</Link>
-                                    <Link to="/accounts/register/" className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded-lg transition">Register</Link>
+                            {/* Session still being checked: skeleton pills, no
+                                Login/Register flash. */}
+                            {loading && (
+                                <div className="flex items-center space-x-3" aria-hidden="true">
+                                    <span className="w-8 h-8 rounded-full bg-gray-200 animate-pulse block"></span>
+                                    <span className="w-20 h-9 rounded-lg bg-gray-200 animate-pulse block"></span>
                                 </div>
+                            )}
+
+                            {sessionReady && (
+                                <>
+                                    {isAuthenticated && <NotificationsBell />}
+
+                                    {isAuthenticated && (
+                                        <Link to="/products/listing/" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-semibold text-sm shadow-sm transition">
+                                            + Sell Item
+                                        </Link>
+                                    )}
+
+                                    {isAuthenticated ? (
+                                        <button 
+                                            onClick={onLogout}
+                                            className="text-sm font-medium text-gray-600 hover:text-red-600 transition"
+                                        >
+                                            Logout
+                                        </button>
+                                    ) : (
+                                        <div className="flex items-center space-x-3 text-sm font-medium">
+                                            <Link to="/accounts/login/" className="text-gray-600 hover:text-indigo-600 transition">Login</Link>
+                                            <Link to="/accounts/register/" className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded-lg transition">Register</Link>
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
 

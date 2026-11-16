@@ -2,14 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api';
 import NotificationsBell from '../../components/NotificationsBell';
 import { STATUS_LABELS } from '../../constants/status';
+import { useToast } from '../../components/Toast';
 
 export default function AgentDashboard({ onLogout }) {
+    const toast = useToast();
     const [activeTab, setActiveTab] = useState('orders');
     const [deliveryTab, setDeliveryTab] = useState('active'); 
     const [tasks, setTasks] = useState([]);
     const [profile, setProfile] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    // id of the task whose status update is in flight — guards against
+    // double-clicks firing the same PATCH twice (duplicate notifications)
+    const [updatingId, setUpdatingId] = useState(null);
 
     // OTP confirmation modal state
     const [otpModal, setOtpModal] = useState(null);   // { taskId, orderId, itemTitle }
@@ -62,6 +67,8 @@ export default function AgentDashboard({ onLogout }) {
             }
             return;
         }
+        if (updatingId !== null) return;   // a request is already in flight
+        setUpdatingId(id);
         try {
             const response = await api(`/api/deliveries/agent/deliveries/${id}/update/`, {
                 method: 'PATCH',
@@ -73,9 +80,11 @@ export default function AgentDashboard({ onLogout }) {
                 throw new Error(errData.error || errData.detail || 'Failed to update status.');
             }
             fetchAgentData();
-            alert('Delivery step updated successfully!');
+            toast.success('Delivery step updated successfully!');
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
+        } finally {
+            setUpdatingId(null);
         }
     };
 
@@ -94,7 +103,7 @@ export default function AgentDashboard({ onLogout }) {
             }
             setOtpModal(null);
             fetchAgentData();
-            alert('Delivery confirmed — OTP verified!');
+            toast.success('Delivery confirmed — OTP verified!');
         } catch (err) {
             setOtpError('Network error. Please try again.');
         } finally {
@@ -179,11 +188,13 @@ export default function AgentDashboard({ onLogout }) {
                                                     </span>
                                                     <button
                                                         onClick={() => updateStatus(task.id, NEXT_STEP[task.status].next)}
+                                                        disabled={updatingId !== null}
                                                         style={{
                                                             padding: '10px 16px', borderRadius: '6px', border: 'none',
                                                             backgroundColor: NEXT_STEP[task.status].color,
                                                             color: '#ffffff', fontWeight: '600', fontSize: '13px',
-                                                            cursor: 'pointer',
+                                                            cursor: updatingId !== null ? 'wait' : 'pointer',
+                                                            opacity: updatingId !== null ? 0.6 : 1,
                                                         }}
                                                     >
                                                         {NEXT_STEP[task.status].label}

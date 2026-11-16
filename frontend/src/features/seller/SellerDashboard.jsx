@@ -68,6 +68,7 @@ export default function SellerDashboard() {
                     <div>
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Revenue</p>
                         <h3 className="text-3xl font-black text-gray-900 mt-2">₹{dashboardData.total_revenue}</h3>
+                        <p className="text-[11px] text-gray-400 mt-1">Cleared + pending — cancelled orders excluded</p>
                     </div>
                     <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 font-bold text-xl">
                         ₹
@@ -78,6 +79,7 @@ export default function SellerDashboard() {
                     <div>
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Cleared Payouts</p>
                         <h3 className="text-3xl font-black text-emerald-600 mt-2">₹{dashboardData.completed_payouts}</h3>
+                        <p className="text-[11px] text-gray-400 mt-1">Delivered orders</p>
                     </div>
                     <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 font-bold text-xl">
                         ✓
@@ -88,6 +90,7 @@ export default function SellerDashboard() {
                     <div>
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Pending Payouts</p>
                         <h3 className="text-3xl font-black text-amber-600 mt-2">₹{dashboardData.pending_payouts}</h3>
+                        <p className="text-[11px] text-gray-400 mt-1">Paid — not yet delivered</p>
                     </div>
                     <div className="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600 font-bold text-xl">
                         ⏳

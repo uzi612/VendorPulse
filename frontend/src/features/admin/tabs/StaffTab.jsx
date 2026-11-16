@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../../api';
 import Pagination from '../../../components/Pagination';
+import { useToast } from '../../../components/Toast';
 
 // Staff & delivery-agent directory: create/edit staff accounts and toggle
 // seller verification. Page state is lifted into AdminPortal so it survives
 // switching tabs.
 export default function StaffTab({ page, setPage }) {
+    const toast = useToast();
     const [staffList, setStaffList] = useState([]);
     const [staffMeta, setStaffMeta] = useState(null);         // {count, total_pages, page, page_size}
     const [loadingStaff, setLoadingStaff] = useState(false);
@@ -41,7 +43,7 @@ export default function StaffTab({ page, setPage }) {
 
     const toggleVerification = async (userId, currentStatus) => {
         if (!userId) {
-            alert("Error: User ID is missing.");
+            toast.error("User ID is missing — cannot update verification.");
             return;
         }
 
@@ -57,7 +59,7 @@ export default function StaffTab({ page, setPage }) {
                 fetchStaff();
             } else {
                 const errData = await res.json().catch(() => ({}));
-                alert("Failed to update: " + (errData.error || "Unknown error"));
+                toast.error("Failed to update: " + (errData.error || "Unknown error"));
             }
         } catch (err) {
             console.error("Network or execution error:", err);
@@ -81,7 +83,7 @@ export default function StaffTab({ page, setPage }) {
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to create staff.');
 
-            alert('Staff created successfully!');
+            toast.success('Staff created successfully!');
             setNewUsername('');
             setNewPassword('');
             setNewEmail('');
@@ -89,7 +91,7 @@ export default function StaffTab({ page, setPage }) {
             setShowNewStaffForm(false);
             fetchStaff();
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
         }
     };
 
@@ -108,11 +110,11 @@ export default function StaffTab({ page, setPage }) {
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to update staff profile.');
 
-            alert('Staff profile updated!');
+            toast.success('Staff profile updated!');
             setEditingStaffId(null);
             fetchStaff();
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
         }
     };
 

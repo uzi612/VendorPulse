@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { CITIES } from '../../cities';
+import { useToast } from '../../components/Toast';
 
 export default function EditListing() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const toast = useToast();
     const [loading, setLoading] = useState(true);
     const [formData, setFormData] = useState({
         title: '',
@@ -100,7 +102,7 @@ export default function EditListing() {
             });
 
             if (res.ok) {
-                alert('Listing updated! It has been submitted for admin review and will appear on the marketplace once approved.');
+                toast.success('Listing updated! It has been submitted for admin review and will appear on the marketplace once approved.');
                 navigate('/products/listing/');
             } else {
                 const errData = await res.json();

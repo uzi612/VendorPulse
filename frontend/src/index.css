@@ -1,4 +1,11 @@
 @import "tailwindcss";
+
+/* Toast slide-in animation (used by components/Toast.jsx) */
+@keyframes toastIn {
+    from { opacity: 0; transform: translateX(12px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
 /* 
 :root {
   --text: #6b6375;

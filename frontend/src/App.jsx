@@ -45,9 +45,14 @@ export default function App() {
         <Route path="/admin/login/" element={<PortalLogin role="admin" onLoginSuccess={refreshAuth} />} />
         <Route path="/agent/login/" element={<PortalLogin role="agent" onLoginSuccess={refreshAuth} />} />
 
-        {/* Protected Admin & Agent Dashboards (Standalone Top-Header Layout) */}
+        {/* Protected Admin & Agent Dashboards (Standalone Top-Header Layout).
+            /admin/* so each tab is deep-linkable: /admin/deliveries/,
+            /admin/staff/, /admin/disputes/, /admin/analytics/ ... The portal
+            shell derives the active tab from the pathname. The exact
+            /admin/login/ route still wins over the splat (react-router ranks
+            static segments first). */}
         <Route
-          path="/admin/deliveries/"
+          path="/admin/*"
           element={
             <RoleRoute allowedRole="admin" redirectPath="/admin/login/">
               <AdminPortal onLogout={logout} />
@@ -65,7 +70,7 @@ export default function App() {
 
         {/* Customer Marketplace Routes */}
         <Route path="/*" element={
-          <Navbar isAuthenticated={auth.isAuthed} onLogout={logout}>
+          <Navbar isAuthenticated={auth.isAuthed} loading={auth.loading} onLogout={logout}>
             <Routes>
               <Route path="/" element={<Home isAuthenticated={auth.isAuthed} />} />
               <Route path="/products/" element={<Products />} />

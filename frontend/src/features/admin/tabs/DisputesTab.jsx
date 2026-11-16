@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../../api';
 import Pagination from '../../../components/Pagination';
+import { useToast } from '../../../components/Toast';
 
 // Buyer disputes queue with resolve/reject decisions (a resolution note is
 // required — it is shown to both the buyer and the seller). Status filter and
 // page state are lifted into AdminPortal so they survive switching tabs.
 export default function DisputesTab({ status, setStatus, page, setPage }) {
+    const toast = useToast();
     const [disputes, setDisputes] = useState([]);
     const [disputeMeta, setDisputeMeta] = useState(null);     // {count, total_pages, page, page_size, open_count, resolved_count, rejected_count}
     const [resolvingDisputeId, setResolvingDisputeId] = useState(null);
@@ -31,7 +33,7 @@ export default function DisputesTab({ status, setStatus, page, setPage }) {
 
     const handleResolveDispute = async (disputeId, decision) => {
         if (!resolutionNote.trim()) {
-            alert('A resolution note is required — it is shown to both the buyer and the seller.');
+            toast.error('A resolution note is required — it is shown to both the buyer and the seller.');
             return;
         }
         try {
@@ -41,12 +43,12 @@ export default function DisputesTab({ status, setStatus, page, setPage }) {
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to resolve dispute.');
-            alert(`Dispute ${decision.toLowerCase()} successfully!`);
+            toast.success(`Dispute ${decision.toLowerCase()} successfully!`);
             setResolvingDisputeId(null);
             setResolutionNote('');
             fetchDisputes();
         } catch (err) {
-            alert(err.message);
+            toast.error(err.message);
         }
     };
 
