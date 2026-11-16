@@ -10,6 +10,10 @@ class Notification(models.Model):
         ('ORDER_UPDATED', 'Order details updated'),
         ('NEW_SALE', 'New sale'),
         ('VERIFICATION', 'Account verification updated'),
+        ('RATING', 'New buyer rating'),
+        ('CANCELLATION', 'Order cancelled by buyer'),
+        ('DISPUTE', 'Order dispute opened or resolved'),
+        ('MODERATION', 'Listing approved, rejected, or awaiting review'),
         ('ASSIGNMENT_NEEDED', 'Order needs manual assignment'),
     ]
 
