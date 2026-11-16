@@ -250,19 +250,22 @@ def seller_dashboard_api(request):
     sold_order_items = OrderItem.objects.filter(seller=user)
     sold_items_count = sold_order_items.exclude(status='CANCELLED').count()
 
-    total_revenue_dict = sold_order_items.filter(
-        status__in=['ORDER_PLACED', 'PICKED_UP', 'DISPATCHED', 'DELIVERED']
-    ).aggregate(total=Sum('item_price'))
-    
-    total_revenue = total_revenue_dict['total'] or 0.00
+    # Revenue partition — one consistent split so the numbers reconcile:
+    #   cleared  = delivered items (payout complete)
+    #   pending  = in-escrow items (order placed / scheduled / picked up /
+    #              dispatched — money earned but delivery not finished)
+    #   total    = cleared + pending (everything non-cancelled)
+    ACTIVE_STATUSES = ['ORDER_PLACED', 'PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED']
 
-    pending_payouts_dict = sold_order_items.exclude(
-        status__in=['DELIVERED', 'CANCELLED']
-    ).aggregate(total=Sum('item_price'))
-    
     completed_payouts_dict = sold_order_items.filter(
         status='DELIVERED'
     ).aggregate(total=Sum('item_price'))
+
+    pending_payouts_dict = sold_order_items.filter(
+        status__in=ACTIVE_STATUSES
+    ).aggregate(total=Sum('item_price'))
+
+    total_revenue = (completed_payouts_dict['total'] or 0.00) + (pending_payouts_dict['total'] or 0.00)
 
     pending_payouts = pending_payouts_dict['total'] or 0.00
     completed_payouts = completed_payouts_dict['total'] or 0.00
