@@ -1,18 +1,27 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
 load_dotenv(BASE_DIR / '.env')
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
-
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('SECRET_KEY', 'fallback-insecure-key-for-dev')
-
-# SECURITY WARNING: don't run with debug turned on in production!
+SECRET_KEY = os.environ.get('SECRET_KEY', 'fallback-insecure-key')
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.environ.get('DB_NAME', 'vendorpulse_db'),
+        'USER': os.environ.get('DB_USER', 'root'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', ''), 
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'PORT': os.environ.get('DB_PORT', '3306'),
+        'OPTIONS': {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
+    }
+}
 
 ALLOWED_HOSTS = []
 
@@ -30,6 +39,7 @@ INSTALLED_APPS = [
     'products',
     'orders',
     'deliveries',
+    'notifications',
     'rest_framework',
     'rest_framework.authtoken',
     'corsheaders',
@@ -37,8 +47,41 @@ INSTALLED_APPS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',  # kept temporarily during the localStorage -> session migration
     ],
+    # Throttling: a global per-identity baseline (IP for anonymous, user id
+    # for logged-in) plus stricter named rates for sensitive endpoints.
+    # Sensitive views opt in via @throttle_classes with the custom classes
+    # in vendorpulse_core.throttles. Exceeding a limit returns 429.
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '30/min',            # anonymous browsing baseline
+        'user': '120/min',           # logged-in baseline (bell polls 3/min)
+        'login': '5/min',            # login + portal-login brute-force guard
+        'register': '10/hour',       # account-creation spam guard
+        'otp_verify': '5/min',       # DELIVERED attempts (OTP guessing guard)
+        'checkout': '10/min',
+        'rating': '20/min',
+        'cancel': '10/min',
+        'dispute': '10/min',
+        'listing_create': '30/hour', # new listings only (POST)
+    },
+}
+
+# Throttle counters (and other cache users) live here. LocMemCache is
+# per-process — fine for the dev server. For production with multiple
+# workers, switch to Redis so limits are shared across processes:
+#   'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+#   'LOCATION': 'redis://127.0.0.1:6379/1',
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'vendorpulse-default',
+    }
 }
 
 MIDDLEWARE = [
@@ -53,6 +96,14 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+# Session (cookie) auth requires CORS to allow credentials and the frontend
+# origin to be trusted for CSRF origin checks.
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
@@ -76,21 +127,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'vendorpulse_core.wsgi.application'
 
-
-# Database
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.environ.get('DB_NAME', 'vendorpulse_db'),
-        'USER': os.environ.get('DB_USER', 'root'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '3307'), # Matches your MySQL port setup
-        'OPTIONS': {
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-        },
-    }
-}
 
 
 
@@ -137,3 +173,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Session cookie behavior
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True   # log out when the browser closes
+SESSION_COOKIE_AGE = 60 * 60 * 8        
