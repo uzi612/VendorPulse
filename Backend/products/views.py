@@ -13,11 +13,34 @@ import secrets
 from .models import Item, Cart, CartItem, CITY_CHOICES
 from orders.models import Order, OrderItem, Rating
 from .serializers import ItemSerializer, CartSerializer, SELLER_RATING_ANNOTATIONS
+from locations.models import Zone
+from locations.views import zone_for_pincode
 from vendorpulse_core.pagination import paginate_queryset
 from vendorpulse_core.throttles import CheckoutThrottle, ListingCreateThrottle
 from notifications.utils import notify
 
 ITEMS_PER_PAGE = 24
+
+
+def _resolve_item_zone(request, item):
+    """
+    Pickup zone for a listing: an explicit zone id (validated against the
+    listing's city) wins; otherwise fall back to the seller's profile zone
+    when it belongs to the same city. Returns (zone_or_None, error_or_None).
+    """
+    zone_id = request.data.get('zone')
+    if zone_id:
+        try:
+            zone = Zone.objects.get(pk=zone_id)
+        except (Zone.DoesNotExist, ValueError, TypeError):
+            return None, "Selected pickup zone was not found."
+        if zone.city != item.location:
+            return None, "The pickup zone must belong to the listing's city."
+        return zone, None
+    profile_zone = getattr(getattr(request.user, 'profile', None), 'zone', None)
+    if profile_zone and profile_zone.city == item.location:
+        return profile_zone, None
+    return None, None
 
 
 @api_view(['GET', 'POST'])
@@ -57,6 +80,11 @@ def item_list_create_api(request):
             # Every listing goes through admin moderation before it appears
             # on the marketplace (user decision: no verified-seller exemption).
             item = serializer.save(seller=request.user, status='AVAILABLE', approval_status='PENDING')
+            item.zone, zone_error = _resolve_item_zone(request, item)
+            if zone_error:
+                item.delete()   # don't leave a half-created listing behind
+                return Response({"error": zone_error}, status=status.HTTP_400_BAD_REQUEST)
+            item.save(update_fields=['zone'])
             for admin in User.objects.filter(is_staff=True):
                 notify(admin, 'MODERATION',
                        f"New listing awaiting review: '{item.title}' by {request.user.username} "
@@ -96,6 +124,12 @@ def item_detail_api(request, pk):
             # silently changed into something that bypasses moderation.
             serializer.save(approval_status='PENDING', rejection_reason=None,
                             reviewed_by=None, reviewed_at=None)
+            if 'location' in request.data or 'zone' in request.data:
+                item.refresh_from_db()
+                item.zone, zone_error = _resolve_item_zone(request, item)
+                if zone_error:
+                    return Response({"error": zone_error}, status=status.HTTP_400_BAD_REQUEST)
+                item.save(update_fields=['zone'])
             # The item just left the marketplace; drop it from buyers' carts.
             CartItem.objects.filter(item=item).delete()
             for admin in User.objects.filter(is_staff=True):
@@ -160,8 +194,14 @@ def remove_from_cart_api(request, cart_item_id):
 @throttle_classes([UserRateThrottle, CheckoutThrottle])
 @transaction.atomic
 def checkout_api(request):
+    """
+    Pincode-first checkout: the buyer's 6-digit pincode resolves the delivery
+    zone AND the city (each city owns a distinct pincode range), so no city
+    dropdown is needed. Body: {pincode: required 6 digits, phone: required,
+    address: optional short detail (flat/house no.)}.
+    """
     user = request.user
-    
+
     try:
         cart = Cart.objects.get(user=user)
     except Cart.DoesNotExist:
@@ -171,15 +211,20 @@ def checkout_api(request):
     if not cart_items.exists():
         return Response({"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
 
-    shipping_address = request.data.get('address') or request.data.get('shipping_address', '')
-    phone = request.data.get('phone', '')
-    shipping_city = request.data.get('city', '')
+    pincode = str(request.data.get('pincode') or '').strip()
+    if not (pincode.isdigit() and len(pincode) == 6):
+        return Response({"error": "A valid 6-digit delivery pincode is required."},
+                        status=status.HTTP_400_BAD_REQUEST)
 
-    if not shipping_address.strip() or not phone.strip():
-        return Response({"error": "Shipping address and phone number are required."}, status=status.HTTP_400_BAD_REQUEST)
+    zone = zone_for_pincode(pincode)
+    if zone is None:
+        return Response({"error": "We don't deliver to this pincode yet."},
+                        status=status.HTTP_400_BAD_REQUEST)
 
-    if shipping_city not in [c[0] for c in CITY_CHOICES]:
-        return Response({"error": "A valid shipping city is required."}, status=status.HTTP_400_BAD_REQUEST)
+    phone = str(request.data.get('phone') or '').strip()
+    address = str(request.data.get('address') or '').strip()[:255]  # optional short detail
+    if not phone.strip():
+        return Response({"error": "A phone number is required."}, status=status.HTTP_400_BAD_REQUEST)
 
     total_price = 0
     for cart_item in cart_items:
@@ -191,9 +236,11 @@ def checkout_api(request):
     order = Order.objects.create(
         user=user,
         total_price=total_price,
-        shipping_address=shipping_address,
-        shipping_city=shipping_city,
-        phone=phone,
+        shipping_address=address,
+        shipping_city=zone.city,          # derived from the pincode, never trusted from the client
+        shipping_zone=zone,
+        shipping_zone_name=zone.name,     # name snapshot, survives zone renames/deactivation
+        pincode=pincode,
         delivery_otp=f"{secrets.randbelow(10000):04d}"
     )
     for cart_item in cart_items:
@@ -253,9 +300,11 @@ def seller_dashboard_api(request):
     # Revenue partition — one consistent split so the numbers reconcile:
     #   cleared  = delivered items (payout complete)
     #   pending  = in-escrow items (order placed / scheduled / picked up /
-    #              dispatched — money earned but delivery not finished)
+    #              dispatched / at hub / in intercity transit — money earned
+    #              but delivery not finished)
     #   total    = cleared + pending (everything non-cancelled)
-    ACTIVE_STATUSES = ['ORDER_PLACED', 'PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED']
+    ACTIVE_STATUSES = ['ORDER_PLACED', 'PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED',
+                       'DROPPED_AT_ORIGIN_HUB', 'IN_TRANSIT', 'AT_DESTINATION_HUB']
 
     completed_payouts_dict = sold_order_items.filter(
         status='DELIVERED'

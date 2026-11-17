@@ -62,6 +62,10 @@ class Item(models.Model):
     reviewed_at = models.DateTimeField(null=True, blank=True)
     image = models.ImageField(upload_to='items/', blank=True, null=True)
     location = models.CharField(max_length=150, choices=CITY_CHOICES, blank=True)
+    # Pickup zone within `location`. Set from the seller's profile zone when
+    # they pick a city (editable). Nullable -> city-wide assignment fallback.
+    zone = models.ForeignKey('locations.Zone', on_delete=models.SET_NULL,
+                             null=True, blank=True, related_name='items')
     address = models.CharField(max_length=255, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

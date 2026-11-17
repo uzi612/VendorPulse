@@ -6,15 +6,74 @@ from django.db.models import Count, Q
 from .models import OrderItem
 from notifications.utils import notify
 
-MAX_ACTIVE_LOAD = 5   # max in-flight deliveries per agent
-ACTIVE_STATUSES = ['PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED']
+MAX_ACTIVE_LOAD = 5   # max in-flight deliveries per agent (across BOTH legs)
+# Statuses where the agent currently holds responsibility for the item:
+PICKUP_LEG_ACTIVE = ['PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED']  # as assigned_agent
+DELIVERY_LEG_ACTIVE = ['DISPATCHED', 'AT_DESTINATION_HUB']           # as delivery_agent (intercity:
+# assigned at arrival in the buyer's city, holds until DELIVERED)
+
+
+def active_load_annotation():
+    """One annotated expression computing an agent's total in-flight load from
+    BOTH columns: items they must pick up/transit (assigned_agent) plus
+    intercity items waiting for their delivery leg (delivery_agent)."""
+    return (Count('assigned_deliveries',
+                  filter=Q(assigned_deliveries__status__in=PICKUP_LEG_ACTIVE))
+            + Count('delivery_tasks',
+                    filter=Q(delivery_tasks__status__in=DELIVERY_LEG_ACTIVE)))
+
+
+def pick_agent(city, zone):
+    """
+    Zone-first agent matching, least-loaded within each tier:
+      tier 1: verified agents whose operating zone == the target zone
+      tier 2: any verified agent in the same city
+    Returns a User or None (callers fall back to ASSIGNMENT_NEEDED).
+    """
+    agents = User.objects.filter(
+        profile__city__iexact=city,
+        profile__is_delivery_agent=True,
+        profile__is_verified=True,
+    ).annotate(load=active_load_annotation()).exclude(load__gte=MAX_ACTIVE_LOAD)
+
+    if zone:
+        best = agents.filter(profile__zone=zone).order_by('load').first()
+        if best:
+            return best
+    return agents.order_by('load').first()
+
+
+def is_intercity(order_item):
+    """True when the item must cross city boundaries (buyer's city differs
+    from the item's pickup city). Unknown pickup city (item deleted) -> intra."""
+    pickup_city = order_item.item.location if order_item.item else ''
+    return bool(pickup_city) and order_item.order.shipping_city != pickup_city
+
+
+def assign_delivery_leg(order_item):
+    """
+    Leg 2 of an intercity item: assign the delivery agent in the BUYER's
+    city/zone. Called when the item ARRIVES in the buyer's city (hub flow:
+    the admin's AT_DESTINATION_HUB transition; legacy flow: DISPATCHED).
+    Call inside that transition's transaction so the assignment is atomic;
+    notifications stay post-commit.
+    """
+    if not is_intercity(order_item) or order_item.delivery_agent_id:
+        return None
+    agent = pick_agent(order_item.order.shipping_city, order_item.order.shipping_zone)
+    if agent is None:
+        return None
+    order_item.delivery_agent = agent
+    order_item.save(update_fields=['delivery_agent'])
+    return agent
 
 
 @receiver(post_save, sender=OrderItem)
 def auto_assign_agent(sender, instance, created, **kwargs):
     """
-    When an OrderItem is created unassigned, find the least-loaded verified
-    agent in the item's pickup city and assign them automatically.
+    LEG 1 - pickup assignment. When an OrderItem is created unassigned, find
+    the least-loaded verified agent in the item's PICKUP city, preferring
+    agents whose operating zone matches the item's pickup zone (Item.zone).
     Tracking number = TRK-<order_id> (shared by all items of the same order).
 
     Also fires notifications:
@@ -29,19 +88,8 @@ def auto_assign_agent(sender, instance, created, **kwargs):
     if not pickup_city:
         return
 
-    # One annotated query: each agent's active load is computed in SQL
-    # (COUNT with a status filter) instead of one COUNT query per agent,
-    # then we pick the least-loaded with capacity.
-    agents = User.objects.filter(
-        profile__city__iexact=pickup_city,
-        profile__is_delivery_agent=True,
-        profile__is_verified=True,
-    ).annotate(
-        load=Count('assigned_deliveries',
-                   filter=Q(assigned_deliveries__status__in=ACTIVE_STATUSES))
-    ).exclude(load__gte=MAX_ACTIVE_LOAD).order_by('load')
-
-    best_agent = agents.first()
+    pickup_zone = instance.zone if getattr(instance, 'zone_id', None) else None
+    best_agent = pick_agent(pickup_city, pickup_zone)
 
     if best_agent is None:
         # No agent with capacity -> stays ORDER_PLACED / unassigned.

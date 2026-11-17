@@ -34,6 +34,8 @@ def order_success_api(request, order_id):
         "total_price": str(order.total_price),
         "shipping_address": order.shipping_address,
         "shipping_city": order.shipping_city,
+        "shipping_zone": order.shipping_zone_name or (order.shipping_zone.name if order.shipping_zone else ''),
+        "pincode": order.pincode or '',
         "phone": order.phone,
         "delivery_otp": order.delivery_otp,  
         "created_at": order.created_at,

@@ -10,6 +10,13 @@ class ItemSerializer(serializers.ModelSerializer):
     # getattr so un-annotated callers get None instead of an AttributeError.
     seller_rating = serializers.SerializerMethodField()
     seller_rating_count = serializers.SerializerMethodField()
+    # Pickup zone display (read-only; the zone itself is set in the views from
+    # the seller's profile or an explicit zone id, never through the serializer).
+    pickup_zone = serializers.SerializerMethodField()
+    zone_id = serializers.ReadOnlyField()   # current zone FK id (None if unzoned)
+
+    def get_pickup_zone(self, obj):
+        return obj.zone.name if obj.zone else None
 
     def get_seller_rating(self, obj):
         value = getattr(obj, 'seller_rating_avg', None)
@@ -23,7 +30,7 @@ class ItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'seller', 'seller_username', 'is_seller_verified', 'seller_rating', 'seller_rating_count', 'category',
             'title', 'description', 'price', 'condition', 'status', 'approval_status', 'rejection_reason', 'image',
-            'location', 'address', 'created_at', 'updated_at'
+            'location', 'zone_id', 'pickup_zone', 'address', 'created_at', 'updated_at'
         ]
         read_only_fields = ['seller', 'approval_status', 'rejection_reason', 'created_at', 'updated_at']
 

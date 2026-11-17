@@ -6,6 +6,8 @@ from django.dispatch import receiver
 class Profile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     city = models.CharField(max_length=100, blank=True, null=True)
+    zone = models.ForeignKey('locations.Zone', on_delete=models.SET_NULL,
+                             null=True, blank=True, related_name='profiles')
     phone = models.CharField(max_length=15, blank=True, null=True)
     is_delivery_agent = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)

@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'orders',
     'deliveries',
     'notifications',
+    'locations',
     'rest_framework',
     'rest_framework.authtoken',
     'corsheaders',
@@ -68,7 +69,7 @@ REST_FRAMEWORK = {
         'rating': '20/min',
         'cancel': '10/min',
         'dispute': '10/min',
-        'listing_create': '30/hour', # new listings only (POST)
+        'listing_create': '2/hour', 
     },
 }
 
@@ -95,10 +96,7 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
 ]
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+
 
 # Session (cookie) auth requires CORS to allow credentials and the frontend
 # origin to be trusted for CSRF origin checks.
@@ -175,5 +173,5 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Session cookie behavior
-SESSION_EXPIRE_AT_BROWSER_CLOSE = True   # log out when the browser closes
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True   
 SESSION_COOKIE_AGE = 60 * 60 * 8        

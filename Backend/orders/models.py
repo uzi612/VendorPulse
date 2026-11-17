@@ -9,6 +9,14 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     shipping_address = models.TextField(default="", blank=True, null=True)
     shipping_city = models.CharField(max_length=100, choices=CITY_CHOICES, blank=True, null=True)
+    # Pincode-first delivery: buyer's 6-digit pincode resolves the zone; the
+    # zone FK + name snapshot work like OrderItem's item_title snapshot - the
+    # FK tracks the live zone, the name preserves order history if a zone is
+    # later renamed or deactivated.
+    pincode = models.CharField(max_length=6, null=True, blank=True)
+    shipping_zone = models.ForeignKey('locations.Zone', on_delete=models.SET_NULL,
+                                      null=True, blank=True, related_name='orders')
+    shipping_zone_name = models.CharField(max_length=100, null=True, blank=True)
     phone = models.CharField(max_length=15, default="", blank=True, null=True)
     delivery_otp = models.CharField(max_length=4, null=True, blank=True)
     
@@ -20,7 +28,13 @@ class OrderItem(models.Model):
         ('ORDER_PLACED', 'Order Placed'),
         ('PICKUP_SCHEDULED', 'VendorPulse Pickup Scheduled'),
         ('PICKED_UP', 'Picked Up from Seller'),
+        # --- intra-city ladder (assigned_agent delivers directly) ---
         ('DISPATCHED', 'In Transit / Dispatched'),
+        # --- intercity ladder: hub-based handover across cities ---
+        ('DROPPED_AT_ORIGIN_HUB', 'Dropped at Origin Hub'),
+        ('IN_TRANSIT', 'In Transit (Hub to Hub)'),
+        ('AT_DESTINATION_HUB', 'At Destination Hub'),
+        # --- shared completion ---
         ('DELIVERED', 'Delivered to Buyer'),
         ('CANCELLED', 'Cancelled by Buyer'),
     ]
@@ -38,11 +52,21 @@ class OrderItem(models.Model):
     item_price = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=50, choices=ORDER_STATUS_CHOICES, default='ORDER_PLACED')
     assigned_agent = models.ForeignKey(
-        User, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True, 
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='assigned_deliveries'
+    )
+    # Leg-2 agent for INTERCITY items (buyer's city/zone): performs the
+    # DISPATCHED -> DELIVERED step with the buyer's OTP. NULL for intra-city
+    # items, where assigned_agent delivers directly (zero behavior change).
+    delivery_agent = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='delivery_tasks'
     )
     tracking_number = models.CharField(max_length=100, blank=True, null=True)
     # Set when the buyer cancels (before pickup). Shown to the seller.
