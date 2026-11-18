@@ -7,6 +7,9 @@ export const STATUS_LABELS = {
     PICKUP_SCHEDULED: 'Pickup Scheduled',
     PICKED_UP: 'Picked Up',
     DISPATCHED: 'In Transit',
+    DROPPED_AT_ORIGIN_HUB: 'Dropped at Origin Hub',
+    IN_TRANSIT: 'In Transit (Hub to Hub)',
+    AT_DESTINATION_HUB: 'At Destination Hub',
     DELIVERED: 'Delivered',
     CANCELLED: 'Cancelled',
 };
@@ -17,6 +20,9 @@ export const STATUS_BADGE_STYLES = {
     PICKUP_SCHEDULED: 'bg-sky-100 text-sky-700',
     PICKED_UP: 'bg-sky-100 text-sky-700',
     DISPATCHED: 'bg-amber-100 text-amber-700',
+    DROPPED_AT_ORIGIN_HUB: 'bg-violet-100 text-violet-700',
+    IN_TRANSIT: 'bg-amber-100 text-amber-700',
+    AT_DESTINATION_HUB: 'bg-violet-100 text-violet-700',
     DELIVERED: 'bg-emerald-100 text-emerald-700',
     CANCELLED: 'bg-red-100 text-red-600',
 };
@@ -28,6 +34,9 @@ export const STATUS_BAR_COLORS = {
     PICKUP_SCHEDULED: '#d97706',
     PICKED_UP: '#d97706',
     DISPATCHED: '#d97706',
+    DROPPED_AT_ORIGIN_HUB: '#7c3aed',
+    IN_TRANSIT: '#d97706',
+    AT_DESTINATION_HUB: '#7c3aed',
     DELIVERED: '#16a34a',
     CANCELLED: '#ef4444',
 };

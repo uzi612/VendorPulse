@@ -274,13 +274,13 @@ export default function Products() {
                 {/* Pagination footer (server-side, 24 per page) */}
                 {meta && meta.total_pages > 1 && (
                     <div className="mt-10 flex justify-between items-center bg-white border border-gray-100 rounded-xl px-5 py-4 shadow-sm">
-                        <span className="text-sm text-gray-500">
+                        {/* <span className="text-sm text-gray-500">
                             Page <b className="text-gray-800">{meta.page}</b> of <b className="text-gray-800">{meta.total_pages}</b>
                             <span className="mx-2 text-gray-300">|</span>
                             {meta.count} item{meta.count === 1 ? '' : 's'}
                             <span className="mx-2 text-gray-300">|</span>
                             showing {(meta.page - 1) * meta.page_size + 1}–{Math.min(meta.page * meta.page_size, meta.count)}
-                        </span>
+                        </span> */}
                         <div className="flex gap-2">
                             <button
                                 disabled={meta.page <= 1}

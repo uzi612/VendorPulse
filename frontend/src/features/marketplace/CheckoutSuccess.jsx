@@ -34,7 +34,12 @@ export default function CheckoutSuccess() {
                         <span className="text-emerald-600 font-black text-xl">₹{order.total_price}</span>
                     </div>
                     <div className="py-4 space-y-2 text-xs text-gray-600">
-                        <p><strong className="text-gray-800">Delivery Address:</strong> {order.shipping_address}</p>
+                        <p>
+                            <strong className="text-gray-800">Delivering to:</strong>{' '}
+                            {order.shipping_zone ? `${order.shipping_zone}, ${order.shipping_city}` : order.shipping_city}
+                            {order.pincode ? ` - ${order.pincode}` : ''}
+                        </p>
+                        <p><strong className="text-gray-800">Address Detail:</strong> {order.shipping_address || 'N/A'}</p>
                         <p><strong className="text-gray-800">Contact Number:</strong> {order.phone}</p>
                     </div>
 

@@ -14,9 +14,12 @@ export default function Listings() {
         category: '',
         condition: '',
         location: '',
+        zone: '',
         address: '',
         image: null
     });
+    const [zones, setZones] = useState([]);   // zones of the selected city
+    const [deleteTarget, setDeleteTarget] = useState(null);   // item pending delete confirmation
 
     useEffect(() => {
         fetchUserListings();
@@ -35,6 +38,19 @@ export default function Listings() {
     const handleChange = (e) => {
         if (e.target.name === 'image') {
             setFormData({ ...formData, image: e.target.files[0] });
+        } else if (e.target.name === 'location') {
+            const city = e.target.value;
+            setFormData({ ...formData, location: city, zone: '' });
+            // Zone pickers need the zones of the chosen city. A seller without
+            // a zone can leave this empty -> city-wide assignment fallback.
+            if (city) {
+                api(`/api/locations/zones/?city=${encodeURIComponent(city)}`)
+                    .then(res => res.ok ? res.json() : { results: [] })
+                    .then(data => setZones(data.results || []))
+                    .catch(() => setZones([]));
+            } else {
+                setZones([]);
+            }
         } else {
             setFormData({ ...formData, [e.target.name]: e.target.value });
         }
@@ -54,7 +70,8 @@ export default function Listings() {
             });
             if (res.ok) {
                 toast.success('Listing posted! It is awaiting admin review and will appear on the marketplace once approved.');
-                setFormData({ title: '', description: '', price: '', category: '', condition: '', location: '', image: null });
+                setFormData({ title: '', description: '', price: '', category: '', condition: '', location: '', zone: '', address: '', image: null });
+                setZones([]);
                 fetchUserListings();
             }
         } catch (err) {
@@ -62,19 +79,29 @@ export default function Listings() {
         }
     };
 
-    const handleDelete = async (id) => {
-        if (!window.confirm("Are you sure you want to delete this listing?")) return;
+    const handleDelete = (item) => {
+        // Opens the in-app confirmation modal instead of window.confirm,
+        // which shows an ugly "localhost says..." dialog.
+        setDeleteTarget(item);
+    };
+
+    const confirmDelete = async () => {
+        const id = deleteTarget?.id;
+        setDeleteTarget(null);
+        if (!id) return;
 
         try {
             const res = await api(`/api/products/items/${id}/`, { method: 'DELETE' });
 
             if (res.ok || res.status === 204) {
+                toast.success('Listing deleted.');
                 // Refresh local items state
                 setUserItems(userItems.filter(item => item.id !== id));
             } else {
-                console.error("Failed to delete listing");
+                toast.error('Could not delete this listing. Please try again.');
             }
         } catch (err) {
+            toast.error('Something went wrong while deleting. Please try again.');
             console.error("Error deleting listing", err);
         }
     };
@@ -106,10 +133,39 @@ export default function Listings() {
                                 <input type="number" name="price" value={formData.price} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                             </div>
                             <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">Condition</label>
+                                <select name="condition" value={formData.condition} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+                                    <option value="">Select Condition</option>
+                                    <option value="NEW">Brand New</option>
+                                    <option value="LIKE_NEW">Like New</option>
+                                    <option value="GOOD">Good</option>
+                                    <option value="FAIR">Fair</option>
+                                </select>
+                            </div>
+                            <div>
                                 <label className="block text-sm font-semibold text-gray-700 mb-1">City</label>
                                 <select name="location" value={formData.location} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
                                     <option value="">Select City</option>
                                     {CITIES.map(city => <option key={city} value={city}>{city}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                                    Pickup Zone <span className="font-normal text-gray-400">(optional)</span>
+                                </label>
+                                <select
+                                    name="zone"
+                                    value={formData.zone}
+                                    onChange={handleChange}
+                                    disabled={!formData.location}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                                >
+                                    <option value="">Entire city (auto-assign anywhere)</option>
+                                    {zones.map(z => (
+                                        <option key={z.id} value={z.id}>
+                                            {z.name} ({z.pincode_from}-{z.pincode_to})
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
                             <div>
@@ -163,7 +219,7 @@ export default function Listings() {
                                                     Edit
                                                 </Link>
                                                 <button 
-                                                    onClick={() => handleDelete(item.id)}
+                                                    onClick={() => handleDelete(item)}
                                                     className="bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg font-semibold text-xs transition"
                                                 >
                                                     Delete
@@ -182,6 +238,45 @@ export default function Listings() {
                     </div>
                 </div>
             </div>
+
+            {/* Delete confirmation modal (in-app replacement for window.confirm) */}
+            {deleteTarget && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-gray-900/50 backdrop-blur-sm"
+                        onClick={() => setDeleteTarget(null)}
+                    ></div>
+                    <div className="relative bg-white rounded-2xl shadow-xl max-w-sm w-full p-6">
+                        <div className="flex items-start gap-4">
+                            <div className="flex-shrink-0 w-11 h-11 rounded-full bg-red-100 flex items-center justify-center">
+                                <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-900">Delete this listing?</h3>
+                                <p className="text-sm text-gray-500 mt-1">
+                                    <span className="font-semibold text-gray-700">{deleteTarget.title}</span> will be permanently removed from your listings.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button
+                                onClick={() => setDeleteTarget(null)}
+                                className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 transition"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmDelete}
+                                className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-red-600 hover:bg-red-700 transition shadow-sm"
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

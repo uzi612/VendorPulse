@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../../api';
+import { CITIES } from '../../../cities';
 import Pagination from '../../../components/Pagination';
 import { useToast } from '../../../components/Toast';
 
@@ -17,12 +18,31 @@ export default function StaffTab({ page, setPage }) {
     const [newEmail, setNewEmail] = useState('');
     const [newAddress, setNewAddress] = useState('');
     const [newRole, setNewRole] = useState('agent');
+    const [newZone, setNewZone] = useState('');
+    const [newZones, setNewZones] = useState([]);
 
     // Edit Staff state
     const [editingStaffId, setEditingStaffId] = useState(null);
     const [editEmail, setEditEmail] = useState('');
     const [editAddress, setEditAddress] = useState('');
     const [editRole, setEditRole] = useState('agent');
+    const [editZone, setEditZone] = useState('');
+    const [editZones, setEditZones] = useState([]);
+
+    // Zones of a city (for the agent's operating-zone picker). Empty list ->
+    // "Entire city" only, which stays valid (city-level eligibility).
+    const fetchZonesForCity = async (city, setter, zoneSetter) => {
+        if (!city) { setter([]); zoneSetter && zoneSetter(''); return; }
+        try {
+            const res = await api(`/api/locations/zones/?city=${encodeURIComponent(city)}`);
+            const data = res.ok ? await res.json() : { results: [] };
+            setter(data.results || []);
+            zoneSetter && zoneSetter('');
+        } catch {
+            setter([]);
+            zoneSetter && zoneSetter('');
+        }
+    };
 
     const fetchStaff = async () => {
         setLoadingStaff(true);
@@ -76,7 +96,8 @@ export default function StaffTab({ page, setPage }) {
                     password: newPassword,
                     email: newEmail,
                     address: newAddress,
-                    role: newRole
+                    role: newRole,
+                    zone: newZone || null
                 })
             });
 
@@ -88,6 +109,8 @@ export default function StaffTab({ page, setPage }) {
             setNewPassword('');
             setNewEmail('');
             setNewAddress('');
+            setNewZone('');
+            setNewZones([]);
             setShowNewStaffForm(false);
             fetchStaff();
         } catch (err) {
@@ -103,7 +126,8 @@ export default function StaffTab({ page, setPage }) {
                 body: JSON.stringify({
                     email: editEmail,
                     address: editAddress,
-                    role: editRole
+                    role: editRole,
+                    zone: editZone || null
                 })
             });
 
@@ -141,7 +165,24 @@ export default function StaffTab({ page, setPage }) {
                         </div>
                         <div style={{ marginBottom: '12px' }}>
                             <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Address / City</label>
-                            <input type="text" value={newAddress} onChange={(e) => setNewAddress(e.target.value)} placeholder="e.g. Pune, Maharashtra" style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+                            <select value={newAddress} onChange={(e) => { setNewAddress(e.target.value); fetchZonesForCity(e.target.value, setNewZones, setNewZone); }} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #cbd5e1', boxSizing: 'border-box', backgroundColor: '#fff' }}>
+                                <option value="">Select City</option>
+                                {CITIES.map(city => <option key={city} value={city}>{city}</option>)}
+                            </select>
+                        </div>
+                        <div style={{ marginBottom: '12px' }}>
+                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Delivery Zone</label>
+                            <select
+                                value={newZone}
+                                onChange={(e) => setNewZone(e.target.value)}
+                                disabled={!newAddress}
+                                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #cbd5e1', boxSizing: 'border-box', backgroundColor: newAddress ? '#fff' : '#f8fafc' }}
+                            >
+                                <option value="">Entire city (anywhere in {newAddress || 'city'})</option>
+                                {newZones.map(z => (
+                                    <option key={z.id} value={z.id}>{z.name} ({z.pincode_from}-{z.pincode_to})</option>
+                                ))}
+                            </select>
                         </div>
                         <div style={{ marginBottom: '12px' }}>
                             <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Password</label>
@@ -185,12 +226,26 @@ export default function StaffTab({ page, setPage }) {
                                                 <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '160px' }} />
                                             </td>
                                             <td style={{ padding: '12px 16px' }}>
-                                                <input type="text" value={editAddress} onChange={(e) => setEditAddress(e.target.value)} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '160px' }} />
+                                                <select value={editAddress} onChange={(e) => { setEditAddress(e.target.value); fetchZonesForCity(e.target.value, setEditZones, setEditZone); }} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '160px', backgroundColor: '#fff' }}>
+                                                    <option value="">Select City</option>
+                                                    {CITIES.map(city => <option key={city} value={city}>{city}</option>)}
+                                                </select>
                                             </td>
                                             <td style={{ padding: '12px 16px' }}>
                                                 <select value={editRole} onChange={(e) => setEditRole(e.target.value)} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1' }}>
                                                     <option value="agent">Delivery Agent</option>
                                                     <option value="admin">Admin</option>
+                                                </select>
+                                                <select
+                                                    value={editZone}
+                                                    onChange={(e) => setEditZone(e.target.value)}
+                                                    disabled={!editAddress}
+                                                    style={{ padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', marginTop: '4px', width: '160px', backgroundColor: editAddress ? '#fff' : '#f8fafc' }}
+                                                >
+                                                    <option value="">Entire city</option>
+                                                    {editZones.map(z => (
+                                                        <option key={z.id} value={z.id}>{z.name} ({z.pincode_from}-{z.pincode_to})</option>
+                                                    ))}
                                                 </select>
                                             </td>
                                             <td style={{ padding: '12px 16px' }}>{member.is_verified ? 'Verified' : 'Unverified'}</td>
@@ -202,7 +257,12 @@ export default function StaffTab({ page, setPage }) {
                                     ) : (
                                         <>
                                             <td style={{ padding: '12px 16px' }}>{member.email || 'N/A'}</td>
-                                            <td style={{ padding: '12px 16px' }}>{member.address || 'N/A'}</td>
+                                            <td style={{ padding: '12px 16px' }}>
+                                                {member.address || 'N/A'}
+                                                {member.zone_name && (
+                                                    <div style={{ fontSize: '11px', color: '#64748b' }}>{member.zone_name}</div>
+                                                )}
+                                            </td>
                                             <td style={{ padding: '12px 16px' }}>
                                                 {member.is_staff && <span style={{ marginRight: '6px', padding: '3px 8px', backgroundColor: '#fef3c7', color: '#d97706', borderRadius: '4px', fontSize: '12px', fontWeight: '600' }}>Admin</span>}
                                                 {member.is_agent && <span style={{ padding: '3px 8px', backgroundColor: '#dcfce7', color: '#16a34a', borderRadius: '4px', fontSize: '12px', fontWeight: '600' }}>Delivery Agent</span>}
@@ -221,6 +281,14 @@ export default function StaffTab({ page, setPage }) {
                                                         setEditEmail(member.email || '');
                                                         setEditAddress(member.address === 'N/A' ? '' : (member.address || ''));
                                                         setEditRole(member.is_staff ? 'admin' : 'agent');
+                                                        setEditZone(member.zone || '');
+                                                        // Load zones of the member's city so the
+                                                        // current zone can be preselected.
+                                                        if (member.address && member.address !== 'N/A') {
+                                                            fetchZonesForCity(member.address, setEditZones, () => setEditZone(member.zone || ''));
+                                                        } else {
+                                                            setEditZones([]);
+                                                        }
                                                     }}
                                                     style={{ padding: '6px 12px', backgroundColor: '#0f172a', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
                                                 >

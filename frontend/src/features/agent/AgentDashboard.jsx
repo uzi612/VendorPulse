@@ -26,12 +26,63 @@ export default function AgentDashboard({ onLogout }) {
     //   Pickup Scheduled (visible, set by assignment) -> Picked Up -> In
     //   Transit -> Delivered (OTP). ORDER_PLACED never reaches an agent.
 
-    // The ONE next step available from each active state — a single button
-    // per task instead of a dropdown, so skipping/backtracking is impossible.
+    // The ONE next step available from each state — a single button per task
+    // instead of a dropdown, so skipping/backtracking is impossible.
+    // INTRA-CITY ladder: Pickup Scheduled -> Picked Up -> Dispatched -> Delivered (OTP).
     const NEXT_STEP = {
         'PICKUP_SCHEDULED': { next: 'PICKED_UP', label: '📦 Mark Picked Up from Seller', color: '#0284c7' },
         'PICKED_UP': { next: 'DISPATCHED', label: '🚚 Mark In Transit / Dispatched', color: '#d97706' },
         'DISPATCHED': { next: 'DELIVERED', label: '✅ Confirm Delivery (OTP)', color: '#16a34a' },
+    };
+
+    // INTERCITY (hub) ladder: the pickup agent's leg ENDS at their city's hub
+    // (they never carry items across cities); the buyer's-city agent collects
+    // from the destination hub and delivers with the OTP.
+    const INTERCITY_STEP = {
+        'PICKUP_SCHEDULED': { next: 'PICKED_UP', label: '📦 Mark Picked Up from Seller', color: '#0284c7' },
+        'PICKED_UP': (task) => ({
+            next: 'DROPPED_AT_ORIGIN_HUB',
+            label: `🏢 Drop at ${task.origin_hub?.name || 'Origin Hub'}`,
+            color: '#7c3aed',
+        }),
+        'AT_DESTINATION_HUB': (task) => ({
+            next: 'DELIVERED',
+            label: `✅ Collect from ${task.destination_hub?.name || 'Hub'} & Deliver (OTP)`,
+            color: '#16a34a',
+        }),
+        // Legacy pre-hub items dispatched under the old flow keep the OTP step.
+        'DISPATCHED': { next: 'DELIVERED', label: '✅ Confirm Delivery (OTP)', color: '#16a34a' },
+    };
+
+    // Which single action this agent can take on this task right now
+    // (null -> their leg is done or waiting on another leg).
+    const nextStepFor = (task) => {
+        if (task.is_intercity) {
+            const step = INTERCITY_STEP[task.status];
+            if (!step) return null;
+            return typeof step === 'function' ? step(task) : step;
+        }
+        return NEXT_STEP[task.status] || null;
+    };
+
+    // Waiting-state banner when no agent action is available (e.g. the item is
+    // sitting at a hub waiting for the admin's line-haul, or in transit).
+    const stateNoteFor = (task) => {
+        if (task.status === 'DROPPED_AT_ORIGIN_HUB') {
+            return `✓ Dropped at ${task.origin_hub?.name || 'the origin hub'} — line-haul to ${task.shipping_city} in ops hands`;
+        }
+        if (task.status === 'IN_TRANSIT') {
+            return `🚚 On the way to ${task.shipping_city} — will reach ${task.destination_hub?.name || 'the destination hub'}`;
+        }
+        if (task.status === 'AT_DESTINATION_HUB') {
+            return task.my_role === 'delivery'
+                ? `🏢 Waiting at ${task.destination_hub?.name || 'the destination hub'} — collect it and deliver`
+                : `🏢 At ${task.destination_hub?.name || 'the destination hub'} — waiting for the local delivery agent`;
+        }
+        if (task.status === 'DISPATCHED' && task.is_intercity && task.my_role !== 'delivery') {
+            return '✓ Dispatched — handed over to the delivery leg';
+        }
+        return '✓ Fulfillment complete — nothing left to do';
     };
 
     const fetchAgentData = async () => {
@@ -170,39 +221,61 @@ export default function AgentDashboard({ onLogout }) {
                                                 <h3 style={{ margin: '0 0 4px 0', color: '#0f172a' }}>Order #{task.order_id} • Item #{task.id}</h3>
                                                 <div style={{ fontSize: '16px', fontWeight: '600', color: '#2563eb' }}>{task.item_title}</div>
                                             </div>
-                                            <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: task.status === 'DELIVERED' ? '#dcfce7' : '#e0f2fe', color: task.status === 'DELIVERED' ? '#166534' : '#0369a1', fontSize: '12px', fontWeight: '600' }}>
-                                                {STATUS_LABELS[task.status] || task.status}
-                                            </span>
+                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                                {/* Intercity handover task: this agent performs the
+                                                    final delivery leg in the buyer's city. */}
+                                                {task.my_role === 'delivery' && (
+                                                    <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: '#fef3c7', color: '#92400e', fontSize: '12px', fontWeight: '700' }}>
+                                                        🤝 Delivery Leg (buyer's city)
+                                                    </span>
+                                                )}
+                                                {task.is_intercity && task.my_role !== 'delivery' && (
+                                                    <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: '#ede9fe', color: '#5b21b6', fontSize: '12px', fontWeight: '700' }}>
+                                                        ✈️ Intercity Pickup
+                                                    </span>
+                                                )}
+                                                <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: task.status === 'DELIVERED' ? '#dcfce7' : '#e0f2fe', color: task.status === 'DELIVERED' ? '#166534' : '#0369a1', fontSize: '12px', fontWeight: '600' }}>
+                                                    {STATUS_LABELS[task.status] || task.status}
+                                                </span>
+                                            </div>
                                         </div>
                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', margin: '16px 0', fontSize: '14px', color: '#475569' }}>
                                             <div><b>Seller Pickup From:</b> <span style={{ color: '#d97706' }}>{task.seller_username} ({task.seller_address})</span></div>
+                                            <div><b>Pickup Zone:</b> {task.pickup_zone || 'City-wide'}</div>
+                                            <div><b>Deliver To:</b> {task.shipping_zone ? `${task.shipping_zone}, ${task.shipping_city}` : task.shipping_city}{task.pincode ? ` - ${task.pincode}` : ''}</div>
                                             <div><b>Buyer Shipping Address:</b> {task.shipping_address}</div>
+                                            {task.is_intercity && (
+                                                <>
+                                                    <div><b>🏢 Origin Hub (drop here):</b> {task.origin_hub ? `${task.origin_hub.name} - ${task.origin_hub.address}` : 'No hub in city (abstract handover)'}</div>
+                                                    <div><b>🏢 Destination Hub (collect here):</b> {task.destination_hub ? `${task.destination_hub.name} - ${task.destination_hub.address}` : 'No hub in city (abstract handover)'}</div>
+                                                </>
+                                            )}
                                             <div><b>Phone:</b> {task.phone}</div>
                                             <div><b>Tracking Number:</b> {task.tracking_number || 'N/A'}</div>
                                         </div>
                                         <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                                            {NEXT_STEP[task.status] ? (
+                                            {nextStepFor(task) ? (
                                                 <>
                                                     <span style={{ fontSize: '13px', color: '#64748b' }}>
                                                         Next step:
                                                     </span>
                                                     <button
-                                                        onClick={() => updateStatus(task.id, NEXT_STEP[task.status].next)}
+                                                        onClick={() => updateStatus(task.id, nextStepFor(task).next)}
                                                         disabled={updatingId !== null}
                                                         style={{
                                                             padding: '10px 16px', borderRadius: '6px', border: 'none',
-                                                            backgroundColor: NEXT_STEP[task.status].color,
+                                                            backgroundColor: nextStepFor(task).color,
                                                             color: '#ffffff', fontWeight: '600', fontSize: '13px',
                                                             cursor: updatingId !== null ? 'wait' : 'pointer',
                                                             opacity: updatingId !== null ? 0.6 : 1,
                                                         }}
                                                     >
-                                                        {NEXT_STEP[task.status].label}
+                                                        {nextStepFor(task).label}
                                                     </button>
                                                 </>
                                             ) : (
-                                                <span style={{ fontSize: '13px', color: '#16a34a', fontWeight: '600' }}>
-                                                    ✓ Fulfillment complete — nothing left to do
+                                                <span style={{ fontSize: '13px', color: '#7c3aed', fontWeight: '600' }}>
+                                                    {stateNoteFor(task)}
                                                 </span>
                                             )}
                                         </div>

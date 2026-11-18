@@ -16,9 +16,11 @@ export default function EditListing() {
         category: 'ELECTRONICS',
         condition: 'NEW',
         location: '',
+        zone: '',
         address: '',
         image: null
     });
+    const [zones, setZones] = useState([]);   // zones of the selected city
     const [previewImage, setPreviewImage] = useState(null);
 
     const categoryChoices = [
@@ -59,10 +61,19 @@ export default function EditListing() {
                         category: validCategory,
                         condition: validCondition,
                         location: data.location || '',
+                        zone: data.zone_id || '',
                         address: data.address || '',
                         image: null
                     });
                     setPreviewImage(data.image || null);
+                    // Load the zone picker options for the listing's city so the
+                    // current zone can be preselected.
+                    if (data.location) {
+                        api(`/api/locations/zones/?city=${encodeURIComponent(data.location)}`)
+                            .then(res => res.ok ? res.json() : { results: [] })
+                            .then(zData => setZones(zData.results || []))
+                            .catch(() => setZones([]));
+                    }
                 } else {
                     console.error("Failed to load item for editing");
                 }
@@ -80,6 +91,18 @@ export default function EditListing() {
         if (e.target.name === 'image') {
             setFormData({ ...formData, image: e.target.files[0] });
             setPreviewImage(URL.createObjectURL(e.target.files[0]));
+        } else if (e.target.name === 'location') {
+            const city = e.target.value;
+            setFormData({ ...formData, location: city, zone: '' });
+            // The zone list must match the chosen city.
+            if (city) {
+                api(`/api/locations/zones/?city=${encodeURIComponent(city)}`)
+                    .then(res => res.ok ? res.json() : { results: [] })
+                    .then(data => setZones(data.results || []))
+                    .catch(() => setZones([]));
+            } else {
+                setZones([]);
+            }
         } else {
             setFormData({ ...formData, [e.target.name]: e.target.value });
         }
@@ -163,6 +186,25 @@ export default function EditListing() {
                             >
                                 <option value="">Select City</option>
                                 {CITIES.map(city => <option key={city} value={city}>{city}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">
+                                Pickup Zone <span className="font-normal text-gray-400">(optional)</span>
+                            </label>
+                            <select
+                                name="zone"
+                                value={formData.zone}
+                                onChange={handleChange}
+                                disabled={!formData.location}
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                            >
+                                <option value="">Entire city (auto-assign anywhere)</option>
+                                {zones.map(z => (
+                                    <option key={z.id} value={z.id}>
+                                        {z.name} ({z.pincode_from}-{z.pincode_to})
+                                    </option>
+                                ))}
                             </select>
                         </div>
                         <div>

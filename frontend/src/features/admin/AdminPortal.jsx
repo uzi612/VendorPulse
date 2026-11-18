@@ -6,6 +6,8 @@ import StaffTab from './tabs/StaffTab';
 import SellersTab from './tabs/SellersTab';
 import DisputesTab from './tabs/DisputesTab';
 import ModerationTab from './tabs/ModerationTab';
+import ZonesTab from './tabs/ZonesTab';
+import HubsTab from './tabs/HubsTab';
 import AdminAnalytics from './AdminAnalytics';
 
 // Admin portal shell: header + tab bar only. Each tab owns its data fetching
@@ -18,6 +20,8 @@ import AdminAnalytics from './AdminAnalytics';
 // Nav definition (key doubles as the URL segment below)
 const NAV_TABS = [
     { key: 'deliveries', label: '📦 Orders & Deliveries' },
+    { key: 'zones', label: '🗺 Delivery Zones' },
+    { key: 'hubs', label: '🏢 Hubs' },
     { key: 'staff', label: '👥 Staff' },
     { key: 'sellers', label: '🏪 Sellers' },
     { key: 'disputes', label: '⚑ Disputes' },
@@ -109,6 +113,8 @@ export default function AdminPortal({ onLogout }) {
                         page={deliveryPage} setPage={setDeliveryPage}
                     />
                 )}
+                {activeTab === 'zones' && <ZonesTab />}
+                {activeTab === 'hubs' && <HubsTab />}
                 {activeTab === 'staff' && (
                     <StaffTab page={staffPage} setPage={setStaffPage} />
                 )}
