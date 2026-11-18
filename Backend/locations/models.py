@@ -68,3 +68,40 @@ class DeliveryHub(models.Model):
 
     def __str__(self):
         return f"{self.city} / {self.name}"
+
+
+class HubRoute(models.Model):
+    """
+    Hub-to-hub line-haul duration (the "shipping time" between two cities).
+
+    When an intercity item is dispatched (IN_TRANSIT), the admin endpoint
+    looks up the origin->destination route and stamps an ETA on the OrderItem
+    (linehaul_eta_at). When that ETA elapses, settle_linehaul_arrivals()
+    marks the item arrived at the destination hub and auto-assigns the
+    buyer-city delivery agent - no manual "arrived" click needed.
+
+    transit_hours = 24 is the fallback for pairs without an explicit route,
+    so a missing seed row can never stall an order.
+    """
+    from_hub = models.ForeignKey(DeliveryHub, on_delete=models.CASCADE,
+                                 related_name='routes_from')
+    to_hub = models.ForeignKey(DeliveryHub, on_delete=models.CASCADE,
+                               related_name='routes_to')
+    transit_hours = models.PositiveIntegerField(default=24)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['from_hub__city', 'to_hub__city']
+        constraints = [
+            models.UniqueConstraint(fields=['from_hub', 'to_hub'],
+                                    name='hub_route_pair_unique'),
+            models.CheckConstraint(
+                check=models.Q(transit_hours__gte=1, transit_hours__lte=720),
+                name='hub_route_transit_hours_valid',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.from_hub.city} -> {self.to_hub.city}: {self.transit_hours}h"

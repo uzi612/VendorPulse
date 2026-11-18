@@ -16,18 +16,33 @@ from orders.models import Dispute
 from accounts.models import Profile
 from products.models import CITY_CHOICES
 from products.models import Item as ProductItem
+from locations.models import Zone
 from notifications.utils import notify
+from locations.views import hub_for_city
+from orders.signals import is_intercity, assign_delivery_leg
+from deliveries.linehaul import (
+    linehaul_eta_hours, stamp_linehaul_departure, _notify_arrival,
+    settle_linehaul_arrivals,
+)
 
 STATUS_LABELS = dict(OrderItem.ORDER_STATUS_CHOICES)
 
-ACTIVE_STATUSES = ['PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED']
+# In-flight statuses shared by analytics + agent utilization (both city legs
+# of the fulfillment ladder: intra-city and the intercity hub flow).
+ACTIVE_STATUSES = ['PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED',
+                   'DROPPED_AT_ORIGIN_HUB', 'IN_TRANSIT', 'AT_DESTINATION_HUB']
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminUser])
 def admin_delivery_list(request):
+    # Timed line-haul: materialize any hub arrivals whose ETA has elapsed
+    # before rendering statuses (lazy settlement - no scheduler needed).
+    settle_linehaul_arrivals()
+
     order_items = OrderItem.objects.select_related(
-        'order', 'seller', 'seller__profile', 'assigned_agent', 'item'
+        'order', 'seller', 'seller__profile', 'assigned_agent', 'delivery_agent',
+        'item', 'order__shipping_zone'
     ).order_by('-id')
 
     group = request.GET.get('status_group')
@@ -37,6 +52,14 @@ def admin_delivery_list(request):
         order_items = order_items.filter(status='DELIVERED')
     elif group == 'cancelled':
         order_items = order_items.filter(status='CANCELLED')
+
+    # Tracking-ID search inside the current group. Scoped strictly to
+    # tracking_number ("TRK-<order_id>"): partial matches work, and it
+    # composes with the group filter before pagination so `count` reflects
+    # the matches.
+    search = (request.GET.get('search') or '').strip()
+    if search:
+        order_items = order_items.filter(tracking_number__icontains=search)
 
     active_count = OrderItem.objects.exclude(status__in=['DELIVERED', 'CANCELLED']).count()
     completed_count = OrderItem.objects.filter(status='DELIVERED').count()
@@ -70,8 +93,23 @@ def admin_delivery_list(request):
             "cancel_note": item.cancel_note,
             "agent_username": item.assigned_agent.username if item.assigned_agent else None,
             "assigned_agent": item.assigned_agent.id if item.assigned_agent else None,
+            "delivery_agent": item.delivery_agent.id if item.delivery_agent else None,
+            "delivery_agent_username": item.delivery_agent.username if item.delivery_agent else None,
+            "pickup_zone": item.item.zone.name if (item.item and item.item.zone) else '',
+            "shipping_zone": item.order.shipping_zone_name
+                             or (item.order.shipping_zone.name if item.order.shipping_zone else ''),
+            "pincode": item.order.pincode or '',
+            "is_intercity": bool(item.item and item.item.location)
+                            and item.order.shipping_city != item.item.location,
+            "origin_hub": (hub_for_city(item.item.location).name
+                           if (item.item and item.item.location and hub_for_city(item.item.location)) else ''),
+            "destination_hub": (hub_for_city(item.order.shipping_city).name
+                                if (item.order.shipping_city and hub_for_city(item.order.shipping_city)) else ''),
             "seller_id": item.seller.id,
             "is_seller_verified": bool(getattr(item.seller, 'profile', None) and item.seller.profile.is_verified),
+            # Timed line-haul: when this in-transit item is expected to arrive
+            # at the destination hub (ISO string; admin UI shows the ETA).
+            "linehaul_eta_at": item.linehaul_eta_at.isoformat() if item.linehaul_eta_at else None,
         })
 
     # ?all=1 keeps the legacy flat-list shape (frontend Sellers tab);
@@ -104,10 +142,34 @@ def admin_assign_delivery(request, pk):
     else:
         item.assigned_agent = None
 
+    # Optional leg-2 override: for intercity items an admin can pick the
+    # delivery agent in the buyer's city (auto-assignment stays the default).
+    d_agent = None
+    if 'delivery_agent' in request.data:
+        delivery_agent_id = request.data.get('delivery_agent')
+        if delivery_agent_id:
+            try:
+                d_agent = User.objects.get(pk=delivery_agent_id)
+                item.delivery_agent = d_agent
+            except User.DoesNotExist:
+                return Response({"error": "Delivery agent not found."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            item.delivery_agent = None
+
     if tracking_number is not None:
         item.tracking_number = tracking_number
 
     item.save()
+
+    if d_agent:
+        notify(
+            d_agent,
+            'NEW_TASK',
+            f"You have been assigned DELIVERY of '{item.item_title}' to the buyer in "
+            f"{item.order.shipping_city} - {item.order.shipping_zone_name or ''} "
+            f"({item.tracking_number or 'TRK pending'}). Collect the buyer's 4-digit OTP.",
+            order_item=item,
+        )
 
     if item.assigned_agent:
         notify(
@@ -182,6 +244,105 @@ def admin_order_update(request, pk):
     }, status=status.HTTP_200_OK)
 
 
+@api_view(['PATCH'])
+@permission_classes([IsAdminUser])
+def admin_fulfillment_status(request, pk):
+    """
+    Line-haul control for INTERCITY orders (the hub flow's admin leg):
+      IN_TRANSIT         : item left the origin hub (DROPPED_AT_ORIGIN_HUB or
+                           legacy DISPATCHED). Stamps the timed line-haul:
+                           linehaul_departed_at/linehaul_eta_at are computed
+                           from the HubRoute duration; when the ETA elapses
+                           the item auto-arrives (settle_linehaul_arrivals).
+      AT_DESTINATION_HUB : manual override - arrive the item early. Auto-
+                           assigns a delivery agent in the buyer's city/zone
+                           inside this transaction (None -> admin alert).
+    """
+    new_status = request.data.get('status')
+
+    ALLOWED = {
+        'IN_TRANSIT': ('DROPPED_AT_ORIGIN_HUB', 'DISPATCHED'),
+        'AT_DESTINATION_HUB': ('IN_TRANSIT', 'DISPATCHED'),   # DISPATCHED = legacy pre-hub items
+    }
+    if new_status not in ALLOWED:
+        return Response(
+            {"error": "Admins can only set 'IN_TRANSIT' or 'AT_DESTINATION_HUB'."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    with transaction.atomic():
+        try:
+            order_item = OrderItem.objects.select_for_update().select_related(
+                'order', 'item').get(pk=pk)
+        except OrderItem.DoesNotExist:
+            return Response({"error": "Order item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_intercity(order_item):
+            return Response(
+                {"error": "This order does not travel between cities - agents handle it directly."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if order_item.status not in ALLOWED[new_status]:
+            valid_previous = ' or '.join(
+                STATUS_LABELS.get(s, s) for s in ALLOWED[new_status])
+            return Response(
+                {"error": f"Out of sequence: this order must first be marked "
+                          f"'{valid_previous}' before it can become "
+                          f"'{STATUS_LABELS.get(new_status, new_status)}'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        order_item.status = new_status
+
+        # Dispatching between hubs -> stamp the timed line-haul ETA so the
+        # arrival happens automatically when the route duration elapses.
+        eta_at = None
+        transit_hours = None
+        if new_status == 'IN_TRANSIT':
+            transit_hours = linehaul_eta_hours(
+                order_item.item.location if order_item.item else '',
+                order_item.order.shipping_city,
+            )
+            eta_at = stamp_linehaul_departure(order_item)
+
+        # Arrival in the buyer's city -> assign the local delivery agent
+        # atomically (hub flow's replacement of the DISPATCHED handover).
+        delivery_agent = None
+        delivery_needs_assignment = False
+        if new_status == 'AT_DESTINATION_HUB' and order_item.delivery_agent_id is None:
+            delivery_agent = assign_delivery_leg(order_item)
+            delivery_needs_assignment = delivery_agent is None
+
+        order_item.save()
+
+    # Notify only after the transition has committed
+    if new_status == 'IN_TRANSIT':
+        destination_city = order_item.order.shipping_city or 'the destination city'
+        notify(
+            order_item.order.user,
+            'STATUS_UPDATE',
+            f"Your order '{order_item.item_title}' ({order_item.tracking_number}) is on its way "
+            f"from {order_item.item.location if order_item.item else 'the origin city'} to "
+            f"{destination_city}. Expected to reach the {destination_city} hub by "
+            f"{timezone.localtime(eta_at).strftime('%d %b, %I:%M %p')}.",
+            order_item=order_item,
+        )
+
+    if new_status == 'AT_DESTINATION_HUB':
+        _notify_arrival(order_item, delivery_agent, delivery_needs_assignment)
+
+    return Response({
+        "message": "Fulfillment status updated!",
+        "id": order_item.id,
+        "status": order_item.status,
+        "delivery_agent": delivery_agent.username if delivery_agent else None,
+        # Timed line-haul info (IN_TRANSIT dispatch): the admin UI shows when
+        # the item will arrive at the destination hub by itself.
+        "transit_hours": transit_hours,
+        "linehaul_eta_at": timezone.localtime(eta_at).isoformat() if eta_at else None,
+    }, status=status.HTTP_200_OK)
+
+
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated, IsAdminUser])
 def admin_staff_management(request):
@@ -194,6 +355,7 @@ def admin_staff_management(request):
         data = []
         for u in rows:
             city = getattr(u, 'profile', None) and getattr(u.profile, 'city', '') or 'N/A'
+            profile_zone = getattr(u, 'profile', None) and u.profile.zone or None
             is_agent = (getattr(u, 'profile', None) and u.profile.is_delivery_agent) \
                 or any(g.name == 'DeliveryAgent' for g in u.groups.all())
             data.append({
@@ -201,6 +363,8 @@ def admin_staff_management(request):
                 "username": u.username,
                 "email": u.email,
                 "address": city if city else 'N/A',
+                "zone": profile_zone.id if profile_zone else None,
+                "zone_name": profile_zone.name if profile_zone else '',
                 "is_staff": u.is_staff,
                 "is_agent": is_agent,
                 "is_verified": getattr(u.profile, 'is_verified', False),
@@ -213,6 +377,16 @@ def admin_staff_management(request):
         email = request.data.get('email', '')
         city = request.data.get('address', '')
         role = request.data.get('role', 'agent')
+        zone_id = request.data.get('zone')
+
+        zone = None
+        if zone_id:
+            zone = Zone.objects.filter(pk=zone_id).first()
+            if zone is None:
+                return Response({"error": "Zone not found."}, status=status.HTTP_400_BAD_REQUEST)
+            if city and zone.city != city:
+                return Response({"error": f"The selected zone belongs to {zone.city}, not {city}."},
+                                status=status.HTTP_400_BAD_REQUEST)
 
         if User.objects.filter(username=username).exists():
             return Response({"error": "Username already exists."}, status=status.HTTP_400_BAD_REQUEST)
@@ -221,6 +395,7 @@ def admin_staff_management(request):
         
         profile, _ = Profile.objects.get_or_create(user=user)
         profile.city = city
+        profile.zone = zone
         if role == 'agent':
             profile.is_delivery_agent = True
             group, _ = Group.objects.get_or_create(name='DeliveryAgent')
@@ -271,26 +446,74 @@ def admin_update_staff(request, pk):
         profile.city = city
         profile.save()
 
+    # Optional zone update: validated against the (possibly new) city.
+    if 'zone' in request.data:
+        zone_id = request.data.get('zone')
+        if zone_id:
+            zone = Zone.objects.filter(pk=zone_id).first()
+            if zone is None:
+                return Response({"error": "Zone not found."}, status=status.HTTP_400_BAD_REQUEST)
+            profile, _ = Profile.objects.get_or_create(user=user)
+            if profile.city and zone.city != profile.city:
+                return Response({"error": f"The selected zone belongs to {zone.city}, not {profile.city}."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            profile.zone = zone
+        else:
+            profile, _ = Profile.objects.get_or_create(user=user)
+            profile.zone = None
+        profile.save()
+
     return Response({"message": "Staff profile updated successfully!"}, status=status.HTTP_200_OK)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def agent_delivery_list(request):
-    order_items = OrderItem.objects.filter(assigned_agent=request.user).exclude(
+    # Timed line-haul: a due hub arrival may hand this agent a new task in
+    # their city - settle before reading tasks so the card shows up now.
+    settle_linehaul_arrivals()
+
+    # Tasks for BOTH legs: items this agent must pick up / transport
+    # (assigned_agent) AND intercity items waiting for their delivery
+    # handover in the buyer's city (delivery_agent).
+    order_items = OrderItem.objects.filter(
+        Q(assigned_agent=request.user) | Q(delivery_agent=request.user)
+    ).exclude(
         status='ORDER_PLACED'
     ).select_related(
-        'order', 'seller', 'seller__profile', 'item'
+        'order', 'seller', 'seller__profile', 'item', 'order__shipping_zone'
     ).order_by('-id')
-    
+
+    # Hub context per card: the pickup agent drops at the ORIGIN city hub;
+    # the delivery agent collects from the BUYER's city hub. Cached per city
+    # so a list of N tasks doesn't do 2N hub queries.
+    hub_cache = {}
+
+    def _hub_for(city):
+        if not city:
+            return None
+        if city not in hub_cache:
+            hub = hub_for_city(city)
+            hub_cache[city] = ({"name": hub.name, "address": hub.address} if hub else None)
+        return hub_cache[city]
+
     data = []
     for item in order_items:
         seller_city = getattr(item.seller, 'profile', None) and getattr(item.seller.profile, 'city', '') or 'N/A'
-        
+        intercity = bool(item.item and item.item.location) and item.order.shipping_city != item.item.location
+
         data.append({
             "id": item.id,
             "order_id": item.order.id,
             "shipping_address": item.order.shipping_address or 'N/A',
             "shipping_city": item.order.shipping_city or '',
+            "shipping_zone": item.order.shipping_zone_name
+                             or (item.order.shipping_zone.name if item.order.shipping_zone else ''),
+            "pincode": item.order.pincode or '',
+            "pickup_zone": item.item.zone.name if (item.item and item.item.zone) else '',
+            "is_intercity": intercity,
+            # Intercity handover points (null when a city has no active hub)
+            "origin_hub": _hub_for(item.item.location if item.item else '') if intercity else None,
+            "destination_hub": _hub_for(item.order.shipping_city) if intercity else None,
             "phone": item.order.phone or 'N/A',
             "item_title": item.item_title,
             "seller_username": item.seller.username,
@@ -302,6 +525,9 @@ def agent_delivery_list(request):
             ),
             "status": item.status,
             "tracking_number": item.tracking_number or '',
+            # Which leg this task is for the requesting agent (the UI shows a
+            # "Delivery" badge for intercity handover tasks).
+            "my_role": 'delivery' if item.delivery_agent_id == request.user.id else 'pickup',
         })
     return Response(data, status=status.HTTP_200_OK)
 
@@ -311,39 +537,82 @@ def agent_delivery_list(request):
 def agent_update_status(request, pk):
     new_status = request.data.get('status')
 
-    AGENT_TRANSITIONS = {
-        'PICKED_UP': 'PICKUP_SCHEDULED',
-        'DISPATCHED': 'PICKED_UP',
-        'DELIVERED': 'DISPATCHED',
-    }
-
-    if new_status not in AGENT_TRANSITIONS:
-        return Response(
-            {"error": "Agents can only move an order to: Picked Up from Seller, "
-                      "In Transit / Dispatched, or Delivered to Buyer."},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
     # Row lock: two concurrent requests for the same item (e.g. a double-click)
     # serialize here. The second one re-reads the already-applied status and is
     # rejected by the ladder check instead of re-applying the transition and
     # firing a duplicate notification.
     with transaction.atomic():
         try:
-            order_item = OrderItem.objects.select_for_update().get(
-                pk=pk, assigned_agent=request.user
-            )
+            order_item = OrderItem.objects.select_for_update().select_related(
+                'order', 'item').get(pk=pk)
         except OrderItem.DoesNotExist:
             return Response(
                 {"error": "Order item not found or not assigned to you."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        required_status = AGENT_TRANSITIONS[new_status]
-        if order_item.status != required_status:
+        # Context-aware fulfillment ladder: what an agent may do depends on
+        # whether the order crosses cities.
+        #   intra-city:  PICKUP_SCHEDULED -> PICKED_UP -> DISPATCHED -> DELIVERED
+        #                (same agent delivers, OTP)
+        #   intercity:   PICKED_UP -> DROPPED_AT_ORIGIN_HUB   (pickup agent's
+        #                leg ENDS at their city's hub - they never carry items
+        #                across cities)  ... admin line-haul ...  delivery
+        #                agent collects from the buyer's-city hub -> DELIVERED
+        # DISPATCHED stays valid for intercity DELIVERED as a legacy fallback
+        # for items dispatched before the hub flow existed.
+        intercity = is_intercity(order_item)
+        required_statuses = None   # tuple; None means unknown/invalid status
+
+        if new_status == 'DELIVERED':
+            # Delivery leg: delivery_agent when one exists (intercity), else
+            # the assigned agent (intra-city: same agent delivers).
+            authorized = (order_item.delivery_agent_id == request.user.id
+                          if order_item.delivery_agent_id
+                          else order_item.assigned_agent_id == request.user.id)
+            required_statuses = ('AT_DESTINATION_HUB', 'DISPATCHED') if intercity else ('DISPATCHED',)
+        elif new_status == 'PICKED_UP':
+            authorized = order_item.assigned_agent_id == request.user.id
+            required_statuses = ('PICKUP_SCHEDULED',)
+        elif new_status == 'DISPATCHED':
+            # Out for delivery - intra-city only. Intercity items stop at the
+            # origin hub (DROPPED_AT_ORIGIN_HUB) instead; the admin runs the
+            # line-haul and the buyer's-city agent delivers.
+            if intercity:
+                return Response(
+                    {"error": "Intercity orders are dropped at the origin hub, not dispatched. "
+                              "Use 'Dropped at Origin Hub' to complete your pickup leg."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            authorized = order_item.assigned_agent_id == request.user.id
+            required_statuses = ('PICKED_UP',)
+        elif new_status == 'DROPPED_AT_ORIGIN_HUB':
+            # Intercity pickup leg completion: drop the item at the origin
+            # city hub; line-haul is the admin's job from here.
+            authorized = order_item.assigned_agent_id == request.user.id
+            required_statuses = ('PICKED_UP',)
+        else:
+            authorized = None
+
+        if required_statuses is None:
+            return Response(
+                {"error": "Agents can only move an order to: Picked Up from Seller, "
+                          "Dropped at Origin Hub (intercity), In Transit / Dispatched "
+                          "(local delivery), or Delivered to Buyer."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if not authorized:
+            return Response(
+                {"error": "Order item not found or not assigned to you."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if order_item.status not in required_statuses:
+            valid_previous = ' or '.join(
+                STATUS_LABELS.get(s, s) for s in required_statuses)
             return Response(
                 {"error": f"Out of sequence: this order must first be marked "
-                          f"'{STATUS_LABELS.get(required_status, required_status)}' "
+                          f"'{valid_previous}' "
                           f"before it can become '{STATUS_LABELS.get(new_status, new_status)}'."},
                 status=status.HTTP_400_BAD_REQUEST
             )
@@ -366,17 +635,39 @@ def agent_update_status(request, pk):
     label = STATUS_LABELS.get(new_status, new_status)
     message = f"Order '{order_item.item_title}' ({order_item.tracking_number}): {label}."
     buyer_message = message
-    if new_status == 'DISPATCHED':
+    if new_status == 'DISPATCHED' and not intercity:
         buyer_message += " Your order is out for delivery - have your 4-digit OTP ready to share with the agent."
+    if new_status == 'DROPPED_AT_ORIGIN_HUB':
+        buyer_message += f" Your order is being prepared for intercity transit to {order_item.order.shipping_city}."
     if new_status == 'DELIVERED':
         buyer_message += " Loved the service? Rate your seller & delivery agent in Profile → Orders."
     notify(order_item.order.user, 'STATUS_UPDATE', buyer_message, order_item=order_item)
     notify(order_item.seller, 'STATUS_UPDATE', message, order_item=order_item)
 
+    # Hub drop = the pickup agent's leg is complete; ops must now run the
+    # line-haul. Alert admins so the item doesn't sit at the hub.
+    if new_status == 'DROPPED_AT_ORIGIN_HUB':
+        origin_hub = hub_for_city(order_item.item.location if order_item.item else '')
+        for admin in User.objects.filter(is_staff=True):
+            notify(
+                admin,
+                'ASSIGNMENT_NEEDED',
+                f"Intercity order '{order_item.item_title}' was dropped at "
+                f"{origin_hub.name if origin_hub else 'the origin hub'} "
+                f"({order_item.item.location if order_item.item else 'origin city'}) - ready for "
+                f"line-haul dispatch to {order_item.order.shipping_city} (TRK-{order_item.order.id}).",
+                order_item=order_item,
+            )
+
+
+
     return Response({
         "message": "Status updated successfully!",
         "id": order_item.id,
-        "status": order_item.status
+        "status": order_item.status,
+        "hub": hub_for_city(order_item.item.location if order_item.item else '').name
+               if (new_status == 'DROPPED_AT_ORIGIN_HUB'
+                   and hub_for_city(order_item.item.location if order_item.item else '')) else None,
     }, status=status.HTTP_200_OK)
 
 @api_view(['GET'])
@@ -514,13 +805,6 @@ def admin_resolve_dispute(request, dispute_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminUser])
 def admin_analytics(request):
-    """
-    Aggregated operational analytics for the admin dashboard.
-    Everything is computed with SQL aggregates (values + annotate) so the
-    whole response costs a fixed handful of queries, not per-row loops.
-    """
-    ACTIVE_STATUSES = ['PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED']
-
     # --- summary counters (one aggregate query each) ---
     delivered_q = OrderItem.objects.filter(status='DELIVERED')
     summary = {

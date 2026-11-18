@@ -9,6 +9,8 @@ from django.utils import timezone
 from django.contrib.auth.models import User
 from vendorpulse_core.throttles import CancelThrottle, DisputeThrottle, RatingThrottle
 from notifications.utils import notify
+from deliveries.linehaul import settle_linehaul_arrivals
+from locations.views import hub_for_city
 from .models import Order, OrderItem, Rating, Dispute
 
 
@@ -171,13 +173,25 @@ def rate_order_item_api(request, order_item_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def track_order_item_api(request, tracking_number):
-    order_item = OrderItem.objects.filter(
+    # Timed line-haul: materialize a due hub arrival so the buyer's tracking
+    # view shows the up-to-date status (lazy settlement hook).
+    settle_linehaul_arrivals()
+
+    order_item = OrderItem.objects.select_related('order', 'item').filter(
         tracking_number=tracking_number,
         order__user=request.user
     ).first()
 
     if order_item is None:
         return Response({"error": "Invalid Tracking Id"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Route context so the tracking UI can render the correct ladder
+    # (intra-city 5 steps vs intercity 7 steps with the hub legs).
+    origin_city = order_item.item.location if order_item.item else None
+    destination_city = order_item.order.shipping_city
+    is_intercity = bool(origin_city) and destination_city != origin_city
+    origin_hub = hub_for_city(origin_city) if is_intercity else None
+    destination_hub = hub_for_city(destination_city) if is_intercity else None
 
     return Response({
         "tracking_number": order_item.tracking_number,
@@ -187,7 +201,16 @@ def track_order_item_api(request, tracking_number):
         "order_id": order_item.order.id,
         "shipping_address": order_item.order.shipping_address,
         "phone": order_item.order.phone,
-        "created_at": order_item.order.created_at
+        "created_at": order_item.order.created_at,
+        # Route type + hub context for the fulfillment timeline
+        "is_intercity": is_intercity,
+        "origin_city": origin_city,
+        "destination_city": destination_city,
+        "origin_hub": origin_hub.name if origin_hub else None,
+        "destination_hub": destination_hub.name if destination_hub else None,
+        # Timed line-haul: expected arrival at the destination hub (ISO) while
+        # the item is IN_TRANSIT; null otherwise.
+        "linehaul_eta_at": order_item.linehaul_eta_at.isoformat() if order_item.linehaul_eta_at else None,
     }, status=status.HTTP_200_OK)
 
 

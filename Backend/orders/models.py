@@ -69,6 +69,13 @@ class OrderItem(models.Model):
         related_name='delivery_tasks'
     )
     tracking_number = models.CharField(max_length=100, blank=True, null=True)
+    # Timed line-haul: stamped when the item is dispatched between hubs
+    # (IN_TRANSIT). When linehaul_eta_at elapses, the item auto-arrives at
+    # the destination hub and a buyer-city delivery agent is assigned
+    # (settle_linehaul_arrivals). Nullable: intra-city and pre-hub legacy
+    # rows never carry these.
+    linehaul_departed_at = models.DateTimeField(null=True, blank=True)
+    linehaul_eta_at = models.DateTimeField(null=True, blank=True, db_index=True)
     # Set when the buyer cancels (before pickup). Shown to the seller.
     cancel_reason = models.CharField(max_length=30, choices=CANCEL_REASON_CHOICES, null=True, blank=True)
     cancel_note = models.TextField(blank=True, null=True)

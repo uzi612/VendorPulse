@@ -118,9 +118,13 @@ def admin_zones_api(request):
 
         from django.contrib.auth.models import User
         from django.db.models import Count, Q
+        # Per-zone agent counts. zone_id lives on Profile, so the values()
+        # lookup must be the profile__zone_id path - values('zone_id') raises
+        # FieldError (User has no zone_id field) and 500s the whole tab.
         agent_counts = {
-            p['zone_id']: p['n']
-            for p in User.objects.filter(profile__zone__isnull=False).values('zone_id')
+            p['profile__zone_id']: p['n']
+            for p in User.objects.filter(profile__zone__isnull=False)
+            .values('profile__zone_id')
             .annotate(n=Count('id', filter=Q(profile__is_delivery_agent=True)))
         }
         data = [{
