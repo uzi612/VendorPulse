@@ -43,10 +43,15 @@ INSTALLED_APPS = [
     'locations',
     'rest_framework',
     'rest_framework.authtoken',
+    'drf_spectacular',
     'corsheaders',
 ]
 
 REST_FRAMEWORK = {
+    # drf-spectacular introspects the views to build /api/schema/; no view
+    # carries schema decorators. The subclass only pins a couple of
+    # operationIds (see api_docs.OPERATION_IDS).
+    'DEFAULT_SCHEMA_CLASS': 'vendorpulse_core.api_docs.VendorPulseAutoSchema',
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.TokenAuthentication',  # kept temporarily during the localStorage -> session migration
@@ -71,6 +76,58 @@ REST_FRAMEWORK = {
         'dispute': '10/min',
         'listing_create': '2/hour', 
     },
+}
+
+# OpenAPI 3.1 document for the whole API surface.
+#   /api/schema/  raw YAML (or ?format=json)
+#   /api/docs/    Swagger UI
+#   /api/redoc/   ReDoc
+# Regenerate/inspect from the CLI: manage.py spectacular --validate
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'VendorPulse API',
+    'DESCRIPTION': (
+        'VendorPulse is a C2C marketplace with courier fulfillment. Buyers '
+        'browse approved listings, check out with a pincode (the pincode '
+        'resolves both the delivery zone and the city), and follow each order '
+        'item through the fulfillment ladder.\n\n'
+        'Fulfillment ladders:\n'
+        '  intra-city: PICKUP_SCHEDULED -> PICKED_UP -> DISPATCHED -> DELIVERED\n'
+        '  intercity : PICKUP_SCHEDULED -> PICKED_UP -> DROPPED_AT_ORIGIN_HUB\n'
+        '              -> IN_TRANSIT (admin line-haul) -> AT_DESTINATION_HUB\n'
+        '              -> DELIVERED (delivery agent in the buyer city)\n\n'
+        'Authentication is session-cookie based: call POST /api/accounts/me/ '
+        'first to obtain the csrftoken cookie, log in through '
+        'POST /api/accounts/portal-login/ (or /api/accounts/login/), then send '
+        'both cookies with every request. A legacy DRF token header is still '
+        'accepted while the frontend finishes migrating.\n\n'
+        'Every domain is also mounted without the /api prefix for backwards '
+        'compatibility; this document lists the canonical /api paths only.'
+    ),
+    'VERSION': '1.0.0',
+    # Serve the schema view + its security scheme in the UI itself.
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    # Only the /api-mounted routes belong in the public contract.
+    'SERVE_URLCONF': 'vendorpulse_core.schema_urls',
+    # Schema-only annotations (no view decorators) live in api_docs.py.
+    'POSTPROCESSING_HOOKS': [
+        'drf_spectacular.hooks.postprocess_schema_enums',
+        'vendorpulse_core.api_docs.apply_endpoint_docs',
+    ],
+    'TAGS': [
+        {'name': 'Accounts',
+         'description': 'Session bootstrap, registration, login and the buyer/seller profile.'},
+        {'name': 'Listings & Cart',
+         'description': 'Marketplace feed, seller listings, cart and pincode-first checkout.'},
+        {'name': 'Orders',
+         'description': 'Buyer order confirmation, tracking, ratings, cancellations and disputes.'},
+        {'name': 'Fulfillment',
+         'description': 'Agent pickup/delivery ladder, admin line-haul, staff and agent administration.'},
+        {'name': 'Zones & Hubs',
+         'description': 'Pincode-to-zone resolution, zone administration and delivery hubs.'},
+        {'name': 'Notifications',
+         'description': 'In-app notification inbox for every role.'},
+    ],
 }
 
 # Throttle counters (and other cache users) live here. LocMemCache is
