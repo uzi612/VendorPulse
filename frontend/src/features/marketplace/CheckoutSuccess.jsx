@@ -33,6 +33,22 @@ export default function CheckoutSuccess() {
                         </div>
                         <span className="text-emerald-600 font-black text-xl">₹{order.total_price}</span>
                     </div>
+
+                    {/* What the buyer actually paid: items + per-item delivery. */}
+                    <div className="py-3 border-b border-gray-100 space-y-1 text-sm">
+                        <div className="flex justify-between text-gray-600">
+                            <span>Item Subtotal</span>
+                            <span className="font-semibold text-gray-900">₹{order.subtotal ?? '0.00'}</span>
+                        </div>
+                        <div className="flex justify-between text-gray-600">
+                            <span>Delivery Charge</span>
+                            <span className="font-semibold text-gray-900">₹{order.delivery_charge ?? '0.00'}</span>
+                        </div>
+                        <div className="flex justify-between text-gray-900 font-bold pt-1">
+                            <span>Total Paid</span>
+                            <span>₹{order.total_price}</span>
+                        </div>
+                    </div>
                     <div className="py-4 space-y-2 text-xs text-gray-600">
                         <p>
                             <strong className="text-gray-800">Delivering to:</strong>{' '}

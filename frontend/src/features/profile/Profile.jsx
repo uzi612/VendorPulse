@@ -107,6 +107,19 @@ export default function Profile() {
         })));
     };
 
+    // Attach the freshly filed return request locally (server confirmed) and
+    // close the return window for that item.
+    const handleReturned = (itemId, returnRequest) => {
+        setOrders(prevOrders => prevOrders.map(order => ({
+            ...order,
+            items: (order.items || []).map(oi =>
+                oi.id === itemId
+                    ? { ...oi, return_request: returnRequest, can_request_return: false }
+                    : oi
+            ),
+        })));
+    };
+
     if (loading) {
         return <div className="max-w-7xl mx-auto px-4 py-16 text-center text-gray-500">Loading profile...</div>;
     }
@@ -217,6 +230,7 @@ export default function Profile() {
                         onRated={handleRated}
                         onCancelled={handleCancelled}
                         onDisputed={handleDisputed}
+                        onReturned={handleReturned}
                     />
 
                     {/* 2. My Listed Items Accordion */}

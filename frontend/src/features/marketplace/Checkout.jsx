@@ -19,6 +19,9 @@ export default function Checkout() {
     // Resolved zone from the pincode: { zone_id, zone_name, city } | null
     const [resolvedZone, setResolvedZone] = useState(null);
     const [zoneError, setZoneError] = useState('');
+    // Live price preview from /checkout/quote/ (per-item delivery + totals).
+    const [quote, setQuote] = useState(null);
+    const [quoteError, setQuoteError] = useState('');
     const [submitError, setSubmitError] = useState('');
     const [placing, setPlacing] = useState(false);
     const resolveTimer = useRef(null);
@@ -56,6 +59,8 @@ export default function Checkout() {
         setFormData({ ...formData, pincode });
         setResolvedZone(null);
         setZoneError('');
+        setQuote(null);
+        setQuoteError('');
 
         if (resolveTimer.current) clearTimeout(resolveTimer.current);
         if (!/^\d{6}$/.test(pincode)) return;   // only resolve a complete pincode
@@ -77,6 +82,33 @@ export default function Checkout() {
     };
 
     useEffect(() => () => resolveTimer.current && clearTimeout(resolveTimer.current), []);
+
+    // Once the pincode resolves, price the cart exactly as checkout will:
+    // /checkout/quote/ applies the same intra-city / intercity rate per item.
+    useEffect(() => {
+        if (!resolvedZone || !formData.pincode || cartItems.length === 0) {
+            setQuote(null);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await api(`/api/products/checkout/quote/?pincode=${formData.pincode}`);
+                const data = await res.json();
+                if (cancelled) return;
+                if (res.ok) {
+                    setQuote(data);
+                    setQuoteError('');
+                } else {
+                    setQuote(null);
+                    setQuoteError(data.error || 'Could not calculate the delivery charge.');
+                }
+            } catch (err) {
+                if (!cancelled) setQuoteError('Could not calculate the delivery charge.');
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [resolvedZone, formData.pincode, cartItems]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -182,20 +214,45 @@ export default function Checkout() {
                     <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 sticky top-24">
                         <h2 className="text-xl font-bold text-gray-800 mb-4">Order Summary</h2>
                         <div className="space-y-3 max-h-60 overflow-y-auto mb-4 pr-1">
-                            {cartItems.map((ci, idx) => {
+                            {(quote?.items || cartItems.map((ci) => {
                                 const item = ci.item || ci;
-                                return (
-                                    <div key={idx} className="flex justify-between text-sm">
-                                        <span className="text-gray-600 truncate max-w-[150px]">{item.title || ci.title}</span>
-                                        <span className="font-semibold text-gray-800">₹{item.price || ci.price}</span>
+                                return { title: item.title || ci.title, price: item.price || ci.price };
+                            })).map((line, idx) => (
+                                <div key={idx} className="text-sm">
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-600 truncate max-w-[150px]">{line.title}</span>
+                                        <span className="font-semibold text-gray-800">₹{line.price}</span>
                                     </div>
-                                );
-                            })}
+                                    {line.delivery_charge && (
+                                        <div className="flex justify-between text-[11px] text-gray-400">
+                                            <span>{line.is_intercity ? 'Intercity delivery' : 'Same-city delivery'}</span>
+                                            <span>₹{line.delivery_charge}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
                         </div>
-                        <div className="flex justify-between items-center text-lg font-black text-gray-900 mb-4 border-t pt-4">
-                            <span>Total Amount</span>
-                            <span className="text-emerald-600">₹{totalPrice}</span>
+
+                        {/* Live price breakdown: item subtotal + per-item delivery. */}
+                        <div className="space-y-2 text-sm border-t pt-4 mb-2">
+                            <div className="flex justify-between text-gray-600">
+                                <span>Item Subtotal</span>
+                                <span className="font-semibold text-gray-900">₹{quote ? quote.subtotal : totalPrice}</span>
+                            </div>
+                            <div className="flex justify-between text-gray-600">
+                                <span>Delivery Charge</span>
+                                <span className="font-semibold text-emerald-600">
+                                    {quote ? `₹${quote.delivery_charge}` : 'from ₹39 / item'}
+                                </span>
+                            </div>
                         </div>
+                        <div className="flex justify-between items-center text-lg font-black text-gray-900 mb-4 border-t pt-3">
+                            <span>Total Payable</span>
+                            <span className="text-emerald-600">₹{quote ? quote.total_price : totalPrice}</span>
+                        </div>
+                        {quoteError && (
+                            <p className="text-xs text-red-600 font-semibold mb-3">{quoteError}</p>
+                        )}
                         {resolvedZone && (
                             <div className="flex justify-between items-center text-sm text-gray-500 mb-4">
                                 <span>Delivery zone</span>

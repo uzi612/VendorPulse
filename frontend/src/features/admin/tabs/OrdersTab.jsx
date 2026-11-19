@@ -247,6 +247,7 @@ export default function OrdersTab({ deliveryTab, setDeliveryTab, page, setPage }
                                 <th style={{ padding: '12px 16px', color: '#475569' }}>Order # / Item</th>
                                 <th style={{ padding: '12px 16px', color: '#475569' }}>Shipping Address</th>
                                 <th style={{ padding: '12px 16px', color: '#475569' }}>Phone</th>
+                                <th style={{ padding: '12px 16px', color: '#475569' }}>Money</th>
                                 <th style={{ padding: '12px 16px', color: '#475569' }}>Status</th>
                                 <th style={{ padding: '12px 16px', color: '#475569' }}>Assigned Agent</th>
                                 <th style={{ padding: '12px 16px', color: '#475569' }}>Tracking #</th>
@@ -312,6 +313,17 @@ export default function OrdersTab({ deliveryTab, setDeliveryTab, page, setPage }
                                             item.phone
                                         )}
                                     </td>
+                                    {/* Per-item money snapshot taken at checkout
+                                        (vendorpulse_core.pricing). */}
+                                    <td style={{ padding: '12px 16px', fontSize: '11px', color: '#475569', whiteSpace: 'nowrap' }}>
+                                        <div>
+                                            <b>Buyer:</b> ₹{(Number(item.item_subtotal || 0) + Number(item.delivery_charge || 0)).toFixed(2)}
+                                        </div>
+                                        <div style={{ color: '#94a3b8' }}>item ₹{item.item_subtotal} + del ₹{item.delivery_charge}</div>
+                                        <div><b style={{ color: '#dc2626' }}>Fee 5%:</b> ₹{item.platform_fee}</div>
+                                        <div><b style={{ color: '#16a34a' }}>Seller:</b> ₹{item.seller_payout}</div>
+                                        <div><b style={{ color: '#7c3aed' }}>Agent:</b> ₹{item.agent_pay}</div>
+                                    </td>
                                     <td style={{ padding: '12px 16px' }}>
                                         <span style={{ padding: '4px 8px', borderRadius: '4px', backgroundColor: item.status === 'DELIVERED' ? '#dcfce7' : item.status === 'CANCELLED' ? '#fee2e2' : '#e0f2fe', color: item.status === 'DELIVERED' ? '#166534' : item.status === 'CANCELLED' ? '#b91c1c' : '#0369a1', fontSize: '11px', fontWeight: '600' }}>
                                             {item.status}
@@ -320,6 +332,11 @@ export default function OrdersTab({ deliveryTab, setDeliveryTab, page, setPage }
                                             <div style={{ fontSize: '11px', color: '#b91c1c', marginTop: '4px' }}>
                                                 Reason: {String(item.cancel_reason).replaceAll('_', ' ').toLowerCase()}
                                                 {item.cancel_note && <div style={{ color: '#64748b' }}>“{item.cancel_note}”</div>}
+                                            </div>
+                                        )}
+                                        {item.return_status && (
+                                            <div style={{ fontSize: '11px', marginTop: '4px', fontWeight: '700', color: item.return_status === 'APPROVED' ? '#166534' : item.return_status === 'REQUESTED' ? '#b45309' : '#64748b' }}>
+                                                ↩ Return {item.return_status}
                                             </div>
                                         )}
                                     </td>

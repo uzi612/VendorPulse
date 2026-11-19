@@ -13,7 +13,22 @@ const SUMMARY_CARDS = [
     ['pending_listings', 'Pending Review', '#d97706'],
     ['registered_users', 'Registered Users', '#0891b2'],
     ['total_agents', 'Delivery Agents', '#4f46e5'],
+    // Marketplace money roll-up (vendorpulse_core.pricing)
+    ['gross_sales', 'Gross Sales', '#0f172a'],
+    ['platform_commission', 'Platform Commission (5%)', '#dc2626'],
+    ['delivery_revenue', 'Delivery Revenue', '#0891b2'],
+    ['seller_payouts', 'Seller Payouts', '#16a34a'],
+    ['agent_payouts', 'Agent Payouts', '#7c3aed'],
+    ['platform_earnings', 'Platform Earnings', '#4f46e5'],
+    ['refunds', 'Refunds', '#94a3b8'],
+    ['pending_returns', 'Pending Returns', '#d97706'],
 ];
+
+// Keys rendered as currency (everything else is a plain count).
+const CURRENCY_KEYS = new Set([
+    'completed_revenue', 'gross_sales', 'platform_commission', 'delivery_revenue',
+    'seller_payouts', 'agent_payouts', 'platform_earnings', 'refunds',
+]);
 
 function Bar({ label, right, value, maxValue, color }) {
     const pct = maxValue > 0 ? Math.max(2, Math.round((value / maxValue) * 100)) : 0;
@@ -93,7 +108,9 @@ export default function AdminAnalytics() {
                     }}>
                         <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
                         <div style={{ fontSize: '26px', fontWeight: '800', color, marginTop: '4px' }}>
-                            {key === 'completed_revenue' ? `₹${Number(summary[key] || 0).toLocaleString('en-IN')}` : (summary[key] ?? 0)}
+                            {CURRENCY_KEYS.has(key)
+                                ? `₹${Number(summary[key] || 0).toLocaleString('en-IN')}`
+                                : (summary[key] ?? 0)}
                         </div>
                     </div>
                 ))}
@@ -129,7 +146,7 @@ export default function AdminAnalytics() {
                     ))}
                 </Panel>
 
-                <Panel title="⭐ Top Sellers (by revenue)">
+                <Panel title="⭐ Top Sellers (by net payout)">
                     {top_sellers.length === 0 ? (
                         <p style={{ color: '#94a3b8', fontSize: '13px' }}>No sales yet.</p>
                     ) : (

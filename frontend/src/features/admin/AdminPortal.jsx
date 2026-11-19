@@ -5,6 +5,7 @@ import OrdersTab from './tabs/OrdersTab';
 import StaffTab from './tabs/StaffTab';
 import SellersTab from './tabs/SellersTab';
 import DisputesTab from './tabs/DisputesTab';
+import ReturnsTab from './tabs/ReturnsTab';
 import ModerationTab from './tabs/ModerationTab';
 import ZonesTab from './tabs/ZonesTab';
 import HubsTab from './tabs/HubsTab';
@@ -25,6 +26,7 @@ const NAV_TABS = [
     { key: 'staff', label: '👥 Staff' },
     { key: 'sellers', label: '🏪 Sellers' },
     { key: 'disputes', label: '⚑ Disputes' },
+    { key: 'returns', label: '↩ Returns' },
     { key: 'moderation', label: '🗂 Listings' },
     { key: 'analytics', label: '📊 Analytics' },
 ];
@@ -51,6 +53,10 @@ export default function AdminPortal({ onLogout }) {
     // Disputes tab
     const [disputeStatus, setDisputeStatus] = useState('open'); // ?status= filter
     const [disputePage, setDisputePage] = useState(1);
+
+    // Returns tab
+    const [returnStatus, setReturnStatus] = useState('requested'); // ?status= filter
+    const [returnPage, setReturnPage] = useState(1);
 
     // Moderation tab
     const [listingStatus, setListingStatus] = useState('pending'); // ?status= filter
@@ -123,6 +129,12 @@ export default function AdminPortal({ onLogout }) {
                     <DisputesTab
                         status={disputeStatus} setStatus={setDisputeStatus}
                         page={disputePage} setPage={setDisputePage}
+                    />
+                )}
+                {activeTab === 'returns' && (
+                    <ReturnsTab
+                        status={returnStatus} setStatus={setReturnStatus}
+                        page={returnPage} setPage={setReturnPage}
                     />
                 )}
                 {activeTab === 'moderation' && (

@@ -10,6 +10,7 @@ export default function AgentDashboard({ onLogout }) {
     const [deliveryTab, setDeliveryTab] = useState('active'); 
     const [tasks, setTasks] = useState([]);
     const [profile, setProfile] = useState(null);
+    const [earnings, setEarnings] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     // id of the task whose status update is in flight — guards against
@@ -97,6 +98,12 @@ export default function AgentDashboard({ onLogout }) {
             if (profileRes.ok) {
                 const profileData = await profileRes.json();
                 setProfile(profileData);
+            }
+
+            // Pay for completed legs + what the open tasks will add.
+            const earningsRes = await api('/api/deliveries/agent/earnings/');
+            if (earningsRes.ok) {
+                setEarnings(await earningsRes.json());
             }
         } catch (err) {
             setError(err.message);
@@ -189,6 +196,23 @@ export default function AgentDashboard({ onLogout }) {
                 {activeTab === 'orders' && (
                     <div>
                         <h2 style={{ marginBottom: '16px', color: '#0f172a' }}>Assigned Delivery Tasks</h2>
+
+                        {/* Earnings summary: completed legs are earned, open
+                            tasks show what will be added once finished. */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px', marginBottom: '24px' }}>
+                            <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderLeft: '4px solid #16a34a', borderRadius: '10px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Earned</div>
+                                <div style={{ fontSize: '26px', fontWeight: '800', color: '#16a34a', marginTop: '4px' }}>₹{earnings?.earned_total ?? '0.00'}</div>
+                            </div>
+                            <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderLeft: '4px solid #d97706', borderRadius: '10px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending</div>
+                                <div style={{ fontSize: '26px', fontWeight: '800', color: '#d97706', marginTop: '4px' }}>₹{earnings?.pending_total ?? '0.00'}</div>
+                            </div>
+                            <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderLeft: '4px solid #4f46e5', borderRadius: '10px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                                <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Completed Tasks</div>
+                                <div style={{ fontSize: '26px', fontWeight: '800', color: '#4f46e5', marginTop: '4px' }}>{earnings?.completed_tasks ?? 0}</div>
+                            </div>
+                        </div>
                         
                         {/* Sub-tabs for Active vs Completed Tasks */}
                         <div style={{ display: 'flex', gap: '24px', borderBottom: '2px solid #e2e8f0', marginBottom: '24px' }}>
@@ -252,6 +276,10 @@ export default function AgentDashboard({ onLogout }) {
                                             )}
                                             <div><b>Phone:</b> {task.phone}</div>
                                             <div><b>Tracking Number:</b> {task.tracking_number || 'N/A'}</div>
+                                            <div>
+                                                <b>Your pay for this task:</b>{' '}
+                                                <span style={{ color: '#16a34a', fontWeight: '700' }}>₹{task.my_pay ?? '0.00'}</span>
+                                            </div>
                                         </div>
                                         <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                                             {nextStepFor(task) ? (

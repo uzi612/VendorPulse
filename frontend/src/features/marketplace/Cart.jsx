@@ -105,19 +105,27 @@ export default function Cart() {
 
                             <div className="space-y-3 pb-6 border-b border-gray-100 text-sm">
                                 <div className="flex justify-between text-gray-600">
-                                    <span>Subtotal</span>
+                                    <span>Item Subtotal</span>
                                     <span className="font-semibold text-gray-900">₹{totalPrice}</span>
                                 </div>
-                                <div className="flex justify-between text-gray-600">
-                                    <span>Delivery Fee</span>
-                                    <span className="text-emerald-600 font-semibold">FREE</span>
+                                <div className="flex justify-between text-gray-600 gap-4">
+                                    <span className="shrink-0">Delivery</span>
+                                    <span className="text-right">
+                                        <span className="text-emerald-600 font-semibold">from ₹39 / item</span>
+                                        <span className="block text-[11px] text-gray-400">
+                                            ₹39 same-city · ₹89 intercity
+                                        </span>
+                                    </span>
                                 </div>
                             </div>
 
                             <div className="flex justify-between items-center py-4">
-                                <span className="font-bold text-gray-900 text-base">Total Amount</span>
+                                <span className="font-bold text-gray-900 text-base">Items Total</span>
                                 <span className="font-black text-2xl text-indigo-600">₹{totalPrice}</span>
                             </div>
+                            <p className="text-[11px] text-gray-400 -mt-2 mb-3">
+                                The exact delivery charge is calculated from your pincode at checkout.
+                            </p>
 
                             <button 
                                 onClick={() => navigate('/products/checkout/')}

@@ -31,6 +31,20 @@ export default function SalesList({ sales }) {
                                     <div className="py-3 text-xs space-y-1 text-gray-600">
                                         <p><strong className="text-gray-800">Buyer:</strong> @{sale.buyer}</p>
                                         <p><strong className="text-gray-800">Delivery Address:</strong> {sale.shipping_address}</p>
+                                        {sale.return_status === 'APPROVED' ? (
+                                            <p className="text-rose-600 font-semibold">
+                                                ↩ Return approved — buyer refunded; your payout for this item was reversed.
+                                            </p>
+                                        ) : (
+                                            <p>
+                                                <strong className="text-gray-800">Platform fee:</strong> −₹{sale.platform_fee ?? 0}
+                                                {' · '}
+                                                <strong className="text-emerald-700">You receive: ₹{sale.seller_payout ?? sale.item_price}</strong>
+                                            </p>
+                                        )}
+                                        {sale.return_status && sale.return_status !== 'APPROVED' && (
+                                            <p className="text-amber-600 font-semibold">↩ Return {sale.return_status.toLowerCase()}</p>
+                                        )}
                                         {sale.status === 'CANCELLED' && sale.cancel_reason && (
                                             <p className="text-red-600 font-semibold">
                                                 ✕ Cancelled by buyer — Reason: {sale.cancel_reason.replaceAll('_', ' ').toLowerCase()}

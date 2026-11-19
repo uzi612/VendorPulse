@@ -6,6 +6,10 @@ export default function SellerDashboard() {
     const navigate = useNavigate();
     const [dashboardData, setDashboardData] = useState({
         total_revenue: 0,
+        gross_revenue: 0,
+        platform_fees: 0,
+        net_payout: 0,
+        refunded_amount: 0,
         completed_payouts: 0,
         pending_payouts: 0,
         active_listings_count: 0,
@@ -62,19 +66,45 @@ export default function SellerDashboard() {
                 </button>
             </div>
 
-            {/* Financial Metric Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+            {/* Financial Metric Cards — gross sales, the 5% platform fee and
+                the net payout are shown as one reconciliation, so the seller
+                always knows exactly what reaches them. */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
                     <div>
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Revenue</p>
-                        <h3 className="text-3xl font-black text-gray-900 mt-2">₹{dashboardData.total_revenue}</h3>
-                        <p className="text-[11px] text-gray-400 mt-1">Cleared + pending — cancelled orders excluded</p>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Gross Revenue</p>
+                        <h3 className="text-3xl font-black text-gray-900 mt-2">₹{dashboardData.gross_revenue ?? dashboardData.total_revenue}</h3>
+                        <p className="text-[11px] text-gray-400 mt-1">Item sales — cancelled and returned orders excluded</p>
                     </div>
                     <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 font-bold text-xl">
                         ₹
                     </div>
                 </div>
 
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
+                    <div>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Platform Fee (5%)</p>
+                        <h3 className="text-3xl font-black text-rose-600 mt-2">−₹{dashboardData.platform_fees ?? 0}</h3>
+                        <p className="text-[11px] text-gray-400 mt-1">Commission deducted from item sales</p>
+                    </div>
+                    <div className="w-12 h-12 bg-rose-50 rounded-xl flex items-center justify-center text-rose-600 font-bold text-xl">
+                        %
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
+                    <div>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Net Payout</p>
+                        <h3 className="text-3xl font-black text-emerald-600 mt-2">₹{dashboardData.net_payout ?? 0}</h3>
+                        <p className="text-[11px] text-gray-400 mt-1">Gross revenue minus the 5% platform fee</p>
+                    </div>
+                    <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 font-bold text-xl">
+                        ✓
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
                     <div>
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Cleared Payouts</p>
@@ -90,10 +120,21 @@ export default function SellerDashboard() {
                     <div>
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Pending Payouts</p>
                         <h3 className="text-3xl font-black text-amber-600 mt-2">₹{dashboardData.pending_payouts}</h3>
-                        <p className="text-[11px] text-gray-400 mt-1">Paid — not yet delivered</p>
+                        <p className="text-[11px] text-gray-400 mt-1">Earned — not yet delivered</p>
                     </div>
                     <div className="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600 font-bold text-xl">
                         ⏳
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
+                    <div>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Refunded</p>
+                        <h3 className="text-3xl font-black text-gray-500 mt-2">₹{dashboardData.refunded_amount ?? 0}</h3>
+                        <p className="text-[11px] text-gray-400 mt-1">Approved returns — item + delivery refunded</p>
+                    </div>
+                    <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-gray-500 font-bold text-xl">
+                        ↩
                     </div>
                 </div>
             </div>
@@ -173,7 +214,10 @@ export default function SellerDashboard() {
                                     <th className="pb-3">Item Title</th>
                                     <th className="pb-3">Buyer</th>
                                     <th className="pb-3">Price</th>
+                                    <th className="pb-3">Platform Fee</th>
+                                    <th className="pb-3">Your Payout</th>
                                     <th className="pb-3">Status</th>
+                                    <th className="pb-3">Return</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-50 text-sm text-gray-700">
@@ -183,10 +227,25 @@ export default function SellerDashboard() {
                                         <td className="py-4 font-semibold text-gray-900">{sale.item_title}</td>
                                         <td className="py-4 text-gray-500">@{sale.buyer}</td>
                                         <td className="py-4 font-bold text-emerald-600">₹{sale.item_price}</td>
+                                        <td className="py-4 text-rose-600 font-semibold">
+                                            {sale.return_status === 'APPROVED' ? '—' : `−₹${sale.platform_fee ?? 0}`}
+                                        </td>
+                                        <td className="py-4 font-bold text-gray-900">
+                                            {sale.return_status === 'APPROVED' ? '₹0.00' : `₹${sale.seller_payout ?? sale.item_price}`}
+                                        </td>
                                         <td className="py-4">
                                             <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700">
                                                 {sale.status}
                                             </span>
+                                        </td>
+                                        <td className="py-4">
+                                            {sale.return_status ? (
+                                                <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${sale.return_status === 'REQUESTED' ? 'bg-amber-50 text-amber-700' : sale.return_status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                    {sale.return_status}
+                                                </span>
+                                            ) : (
+                                                <span className="text-gray-300">—</span>
+                                            )}
                                         </td>
                                     </tr>
                                 ))}
