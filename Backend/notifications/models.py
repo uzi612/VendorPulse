@@ -13,6 +13,7 @@ class Notification(models.Model):
         ('RATING', 'New buyer rating'),
         ('CANCELLATION', 'Order cancelled by buyer'),
         ('DISPUTE', 'Order dispute opened or resolved'),
+        ('RETURN', 'Return requested or decided'),
         ('MODERATION', 'Listing approved, rejected, or awaiting review'),
         ('ASSIGNMENT_NEEDED', 'Order needs manual assignment'),
     ]

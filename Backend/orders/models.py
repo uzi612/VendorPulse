@@ -19,6 +19,15 @@ class Order(models.Model):
     shipping_zone_name = models.CharField(max_length=100, null=True, blank=True)
     phone = models.CharField(max_length=15, default="", blank=True, null=True)
     delivery_otp = models.CharField(max_length=4, null=True, blank=True)
+
+    # Money snapshot taken at checkout (see vendorpulse_core.pricing):
+    #   subtotal        = sum of the order's item prices
+    #   delivery_charge = sum of the per-item delivery fees
+    #   total_price     = subtotal + delivery_charge (what the buyer pays)
+    # Keeping the split means the confirmation page can show a real breakdown
+    # and later rate changes never rewrite an existing order.
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    delivery_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     
     def __str__(self):
         return f"Order #{self.id} by {self.user.username}"
@@ -50,6 +59,20 @@ class OrderItem(models.Model):
     seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales')
     item_title = models.CharField(max_length=200)
     item_price = models.DecimalField(max_digits=10, decimal_places=2)
+
+    # Per-item money snapshot (vendorpulse_core.pricing):
+    #   delivery_charge   what the buyer pays to ship this item
+    #   platform_fee      5% of item_price, deducted from the seller
+    #   seller_payout     item_price - platform_fee
+    #   pickup_agent_pay  leg 1 (intra-city: the only leg)
+    #   delivery_agent_pay leg 2 (intercity only)
+    # Snapshotted rather than re-derived so past payouts stay stable when the
+    # rate card in settings changes.
+    delivery_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    platform_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    seller_payout = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    pickup_agent_pay = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    delivery_agent_pay = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     status = models.CharField(max_length=50, choices=ORDER_STATUS_CHOICES, default='ORDER_PLACED')
     assigned_agent = models.ForeignKey(
         User,
@@ -76,12 +99,20 @@ class OrderItem(models.Model):
     # rows never carry these.
     linehaul_departed_at = models.DateTimeField(null=True, blank=True)
     linehaul_eta_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Stamped when the agent completes the DELIVERED transition. Starts the
+    # 24-hour buyer return window (ReturnRequest below).
+    delivered_at = models.DateTimeField(null=True, blank=True, db_index=True)
     # Set when the buyer cancels (before pickup). Shown to the seller.
     cancel_reason = models.CharField(max_length=30, choices=CANCEL_REASON_CHOICES, null=True, blank=True)
     cancel_note = models.TextField(blank=True, null=True)
     
     def __str__(self):
         return f"{self.item_title} (Seller: {self.seller.username})"
+
+    @property
+    def agent_pay_total(self):
+        """What the agents earn on this item (both legs combined)."""
+        return (self.pickup_agent_pay or 0) + (self.delivery_agent_pay or 0)
 
 
 class Rating(models.Model):
@@ -146,3 +177,48 @@ class Dispute(models.Model):
 
     def __str__(self):
         return f"Dispute #{self.id} on OrderItem #{self.order_item_id} ({self.status})"
+
+
+class ReturnRequest(models.Model):
+    """
+    Buyer's return request for one delivered item, open for the first
+    RETURN_WINDOW_HOURS (24 h) after delivery.
+
+    One row per OrderItem (OneToOne, like Rating and Dispute). The buyer files
+    it from the order card; an admin then approves or rejects it. Approval is
+    the money-moving step: the buyer is refunded item price + that item's
+    delivery charge, the 5% commission is reversed (seller payout becomes 0)
+    and the listing is restocked so the seller can resell it.
+    """
+    REASON_CHOICES = [
+        ('CHANGED_MIND', 'Changed my mind'),
+        ('DAMAGED', 'Item arrived damaged'),
+        ('NOT_AS_DESCRIBED', 'Not as described'),
+        ('WRONG_ITEM', 'Wrong item delivered'),
+        ('OTHER', 'Other'),
+    ]
+    STATUS_CHOICES = [
+        ('REQUESTED', 'Requested'),
+        ('APPROVED', 'Approved'),
+        ('REJECTED', 'Rejected'),
+    ]
+
+    order_item = models.OneToOneField(OrderItem, on_delete=models.CASCADE,
+                                      related_name='return_request')
+    buyer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='returns_filed')
+    seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name='returns_received')
+    reason = models.CharField(max_length=30, choices=REASON_CHOICES)
+    note = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='REQUESTED')
+    # Set when approved: item_price + delivery_charge at the time of the sale.
+    refund_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    admin_note = models.TextField(blank=True, null=True)
+    resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name='returns_resolved')
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Return #{self.id} on OrderItem #{self.order_item_id} ({self.status})"

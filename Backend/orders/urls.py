@@ -10,4 +10,6 @@ urlpatterns = [
     # Buyer cancels before pickup / opens a dispute after delivery
     path('items/<int:order_item_id>/cancel/', cancel_order_item_api, name='cancel_order_item'),
     path('items/<int:order_item_id>/dispute/', open_dispute_api, name='open_dispute'),
+    # Buyer requests a return within 24 h of delivery
+    path('items/<int:order_item_id>/return/', request_return_api, name='request_return'),
 ]

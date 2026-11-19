@@ -6,12 +6,17 @@ from rest_framework import status
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
+from django.conf import settings
 from django.contrib.auth.models import User
+from decimal import Decimal
 from vendorpulse_core.throttles import CancelThrottle, DisputeThrottle, RatingThrottle
+from vendorpulse_core.pricing import (
+    is_return_window_open, money, return_window_ends_at,
+)
 from notifications.utils import notify
 from deliveries.linehaul import settle_linehaul_arrivals
 from locations.views import hub_for_city
-from .models import Order, OrderItem, Rating, Dispute
+from .models import Order, OrderItem, Rating, Dispute, ReturnRequest
 
 
 @api_view(['GET'])
@@ -33,6 +38,8 @@ def order_success_api(request, order_id):
 
     return Response({
         "order_id": order.id,
+        "subtotal": str(order.subtotal),
+        "delivery_charge": str(order.delivery_charge),
         "total_price": str(order.total_price),
         "shipping_address": order.shipping_address,
         "shipping_city": order.shipping_city,
@@ -211,6 +218,14 @@ def track_order_item_api(request, tracking_number):
         # Timed line-haul: expected arrival at the destination hub (ISO) while
         # the item is IN_TRANSIT; null otherwise.
         "linehaul_eta_at": order_item.linehaul_eta_at.isoformat() if order_item.linehaul_eta_at else None,
+        # Returns: the 24-hour window opens when the item is delivered.
+        "delivery_charge": str(order_item.delivery_charge),
+        "delivered_at": order_item.delivered_at.isoformat() if order_item.delivered_at else None,
+        "return_window_ends_at": (
+            return_window_ends_at(order_item.delivered_at).isoformat()
+            if order_item.delivered_at else None),
+        "return_status": (order_item.return_request.status
+                          if getattr(order_item, 'return_request', None) else None),
     }, status=status.HTTP_200_OK)
 
 
@@ -266,6 +281,13 @@ def cancel_order_item_api(request, order_item_id):
     order_item.cancel_reason = reason
     order_item.cancel_note = note or None
     order_item.assigned_agent = None   # frees the agent's active-load slot
+    # No money moves on a cancelled item: no delivery charged, no commission,
+    # no payout and no agent pay (cancellation is only possible before pickup).
+    order_item.delivery_charge = Decimal('0.00')
+    order_item.platform_fee = Decimal('0.00')
+    order_item.seller_payout = Decimal('0.00')
+    order_item.pickup_agent_pay = Decimal('0.00')
+    order_item.delivery_agent_pay = Decimal('0.00')
     order_item.save()
 
     # Restock the listing so others can buy it (item record may be gone)
@@ -273,11 +295,16 @@ def cancel_order_item_api(request, order_item_id):
         order_item.item.status = 'AVAILABLE'
         order_item.item.save()
 
-    # Order total = what is still being fulfilled on this order
+    # Order totals = what is still being fulfilled on this order: item
+    # subtotal plus the delivery charge of the surviving items.
     remaining = OrderItem.objects.filter(order=order_item.order).exclude(
-        status='CANCELLED').aggregate(t=Sum('item_price'))['t']
-    order_item.order.total_price = remaining or 0
-    order_item.order.save()
+        status='CANCELLED').aggregate(
+            items=Sum('item_price'), delivery=Sum('delivery_charge'))
+    order = order_item.order
+    order.subtotal = remaining['items'] or 0
+    order.delivery_charge = remaining['delivery'] or 0
+    order.total_price = (order.subtotal or 0) + (order.delivery_charge or 0)
+    order.save(update_fields=['subtotal', 'delivery_charge', 'total_price'])
 
     reason_label = CANCEL_REASON_LABELS.get(reason, reason)
     detail = f" Reason: {reason_label}." + (f" Note: {note}" if note else "")
@@ -360,4 +387,83 @@ def open_dispute_api(request, order_item_id):
     return Response({
         "message": "Dispute filed. Our team will review it and get back to you.",
         "dispute": {"id": dispute.id, "status": dispute.status, "reason": dispute.reason},
+    }, status=status.HTTP_201_CREATED)
+
+
+RETURN_REASON_LABELS = dict(ReturnRequest.REASON_CHOICES)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@throttle_classes([UserRateThrottle, DisputeThrottle])
+@transaction.atomic
+def request_return_api(request, order_item_id):
+    """
+    Buyer requests a return for one delivered item inside the return window.
+
+    Body: {reason: 'CHANGED_MIND'|'DAMAGED'|'NOT_AS_DESCRIBED'|'WRONG_ITEM'|'OTHER',
+           note?: free text}
+    The window is settings.RETURN_WINDOW_HOURS (24 h) from delivered_at. One
+    request per item; an admin approves or rejects it. Approval refunds the
+    item price + delivery charge and reverses the seller's payout.
+    """
+    try:
+        order_item = OrderItem.objects.select_related('order', 'seller').get(pk=order_item_id)
+    except OrderItem.DoesNotExist:
+        return Response({"error": "Order item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if order_item.order.user != request.user:
+        return Response({"error": "Only the buyer can request a return."},
+                        status=status.HTTP_403_FORBIDDEN)
+
+    if order_item.status != 'DELIVERED':
+        return Response({"error": "Returns can be requested only after the item is delivered."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    if ReturnRequest.objects.filter(order_item=order_item).exists():
+        return Response({"error": "A return request already exists for this item."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    if not is_return_window_open(order_item.delivered_at):
+        hours = int(settings.RETURN_WINDOW_HOURS)
+        return Response(
+            {"error": f"The {hours}-hour return window for this item has closed."},
+            status=status.HTTP_400_BAD_REQUEST)
+
+    reason = request.data.get('reason')
+    if reason not in [c[0] for c in ReturnRequest.REASON_CHOICES]:
+        return Response(
+            {"error": f"A valid reason is required: "
+                      f"{[c[0] for c in ReturnRequest.REASON_CHOICES]}."},
+            status=status.HTTP_400_BAD_REQUEST)
+
+    note = str(request.data.get('note') or '').strip()[:1000]
+
+    return_request = ReturnRequest.objects.create(
+        order_item=order_item,
+        buyer=request.user,
+        seller=order_item.seller,
+        reason=reason,
+        note=note or None,
+    )
+
+    reason_label = RETURN_REASON_LABELS.get(reason, reason)
+    notify(order_item.seller, 'RETURN',
+           f"{request.user.username} requested a return for '{order_item.item_title}': "
+           f"{reason_label}.",
+           order_item=order_item)
+    for admin in User.objects.filter(is_staff=True):
+        notify(admin, 'RETURN',
+               f"Return #{return_request.id} on '{order_item.item_title}' by "
+               f"{request.user.username}: {reason_label}.",
+               order_item=order_item)
+
+    return Response({
+        "message": "Return requested. Our team will review it within 24 hours.",
+        "return": {
+            "id": return_request.id,
+            "status": return_request.status,
+            "reason": return_request.reason,
+            "refund_amount": str(return_request.refund_amount),
+        },
     }, status=status.HTTP_201_CREATED)
