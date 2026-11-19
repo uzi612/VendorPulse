@@ -1,13 +1,31 @@
 import os
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / '.env')
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'fallback-insecure-key')
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+
+def env_list(name, default=''):
+    """Read a comma-separated env var into a clean list."""
+    return [v.strip() for v in os.environ.get(name, default).split(',') if v.strip()]
+
+
+# Fail closed: an accidental production run without .env must not expose
+# Django debug pages. Local dev sets DEBUG=True in Backend/.env.
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = 'dev-only-insecure-key'
+    else:
+        raise ImproperlyConfigured(
+            'SECRET_KEY is required when DEBUG=False. Set it in Backend/.env.'
+        )
 
 DATABASES = {
     'default': {
@@ -23,7 +41,8 @@ DATABASES = {
     }
 }
 
-ALLOWED_HOSTS = []
+# Comma-separated in .env, e.g. "vendorpulse.example.com,www.vendorpulse.example.com"
+ALLOWED_HOSTS = env_list('ALLOWED_HOSTS')
 
 
 # Application definition
@@ -78,6 +97,21 @@ REST_FRAMEWORK = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Marketplace money model (see vendorpulse_core/pricing.py)
+# ---------------------------------------------------------------------------
+# Amounts are in INR and snapshot onto each order item at checkout, so tuning
+# these only affects orders placed afterwards.
+DELIVERY_FEE_INTRA = '39.00'        # buyer pays, same-city delivery
+DELIVERY_FEE_INTERCITY = '89.00'    # buyer pays, cross-city hub delivery
+AGENT_PAY_INTRA = '25.00'           # one agent handles pickup + delivery
+AGENT_PAY_PICKUP = '20.00'          # intercity leg 1: seller -> origin hub
+AGENT_PAY_DELIVERY = '30.00'        # intercity leg 2: destination hub -> buyer
+PLATFORM_COMMISSION_PERCENT = '5.00'  # deducted from the seller's payout
+
+# Buyers may request a return for this many hours after delivery.
+RETURN_WINDOW_HOURS = 24
+
 # OpenAPI 3.1 document for the whole API surface.
 #   /api/schema/  raw YAML (or ?format=json)
 #   /api/docs/    Swagger UI
@@ -130,6 +164,14 @@ SPECTACULAR_SETTINGS = {
     ],
 }
 
+# drf-spectacular's system checks introspect the FULL URLconf, which mounts
+# every domain twice (bare + /api) for backwards compatibility. That produces
+# expected operationId collisions (W001) and "unable to guess serializer"
+# notices (W002) for function-based views. The published contract is generated
+# from vendorpulse_core.schema_urls and validated separately (0 warnings,
+# 57 unique operationIds), so only these two known IDs are silenced.
+SILENCED_SYSTEM_CHECKS = ['drf_spectacular.W001', 'drf_spectacular.W002']
+
 # Throttle counters (and other cache users) live here. LocMemCache is
 # per-process — fine for the dev server. For production with multiple
 # workers, switch to Redis so limits are shared across processes:
@@ -141,6 +183,17 @@ CACHES = {
         'LOCATION': 'vendorpulse-default',
     }
 }
+
+# With more than one Gunicorn worker, DRF throttle counters must be shared or
+# each worker gets its own allowance. Set REDIS_URL in production.
+REDIS_URL = os.environ.get('REDIS_URL')
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+        }
+    }
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -156,12 +209,13 @@ MIDDLEWARE = [
 
 
 # Session (cookie) auth requires CORS to allow credentials and the frontend
-# origin to be trusted for CSRF origin checks.
+# origin to be trusted for CSRF origin checks. Production is same-origin (the
+# SPA and API share one domain), so CORS stays empty there; dev needs the Vite
+# origins because the proxy forwards their Origin header to Django.
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+_dev_origins = ('http://localhost:5173,http://127.0.0.1:5173' if DEBUG else '')
+CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', _dev_origins)
+CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
 
 ROOT_URLCONF = 'vendorpulse_core.urls'
 
@@ -218,8 +272,11 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
+# The leading slash matters: a relative "static/" breaks admin assets under
+# /django-admin/ (they would resolve to /django-admin/static/...).
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -227,8 +284,31 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Persist uploads outside the release directory in production:
+#   MEDIA_ROOT=/var/www/vendorpulse/shared/media
+MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', BASE_DIR / 'media'))
 
 # Session cookie behavior
-SESSION_EXPIRE_AT_BROWSER_CLOSE = True   
-SESSION_COOKIE_AGE = 60 * 60 * 8        
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_COOKIE_AGE = 60 * 60 * 8
+
+
+# ---------------------------------------------------------------------------
+# Production hardening (active only when DEBUG=False)
+# ---------------------------------------------------------------------------
+if not DEBUG:
+    # Nginx terminates TLS and forwards X-Forwarded-Proto.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    # Keep the plain-HTTP health probe usable for the load balancer / uptime
+    # monitor. Paths are matched without the leading slash.
+    SECURE_REDIRECT_EXEMPT = [r'^health/$']
+
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+    SECURE_HSTS_SECONDS = 31536000          # 1 year; only after HTTPS works
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY' 

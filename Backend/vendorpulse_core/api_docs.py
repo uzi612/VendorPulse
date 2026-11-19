@@ -269,6 +269,14 @@ COMPONENTS = {
         'linehaul_eta_at': NULL(S(fmt='date-time',
                                   desc='Expected destination-hub arrival '
                                        'while IN_TRANSIT.')),
+        # Money snapshot (vendorpulse_core.pricing)
+        'item_subtotal': S('Item price as a decimal string.'),
+        'delivery_charge': S('Buyer delivery fee for this item.'),
+        'platform_fee': S('5% commission on the item price.'),
+        'seller_payout': S('Item price minus the platform fee.'),
+        'agent_pay': S('Total agent pay across both legs.'),
+        'platform_earnings': S('Commission + delivery fee - agent pay.'),
+        'return_status': NULL(S(enum=['REQUESTED', 'APPROVED', 'REJECTED'])),
     }),
     'AgentTask': O({
         'id': I('Order item id.'),
@@ -290,6 +298,8 @@ COMPONENTS = {
         'tracking_number': S(),
         'my_role': S(enum=['pickup', 'delivery'],
                      desc='Which leg this task is for the caller.'),
+        'my_pay': S('What the caller earns for this task (pickup-leg or '
+                    'delivery-leg fee from the checkout snapshot).'),
     }),
     'StaffRow': O({
         'id': I(),
@@ -319,6 +329,26 @@ COMPONENTS = {
         'resolved_by': NULL(S()),
         'resolved_at': NULL(S()),
     }),
+    'ReturnRow': O({
+        'id': I(),
+        'status': S(enum=['REQUESTED', 'APPROVED', 'REJECTED']),
+        'reason': S(enum=['CHANGED_MIND', 'DAMAGED', 'NOT_AS_DESCRIBED',
+                          'WRONG_ITEM', 'OTHER']),
+        'note': NULL(S('Buyer free text.')),
+        'item_title': S(),
+        'item_price': S(),
+        'delivery_charge': S('Delivery fee on this item.'),
+        'refund_amount': S('Item price + delivery when approved.'),
+        'order_id': I(),
+        'tracking_number': S(),
+        'buyer': S(),
+        'seller': S(),
+        'delivered_at': NULL(S()),
+        'created_at': S(),
+        'admin_note': NULL(S()),
+        'resolved_by': NULL(S()),
+        'resolved_at': NULL(S()),
+    }),
     'ModerationRow': O({
         'id': I(),
         'title': S(),
@@ -337,7 +367,9 @@ COMPONENTS = {
     }),
     'OrderConfirmation': O({
         'order_id': I(),
-        'total_price': S(),
+        'subtotal': S('Item prices (excluding delivery).'),
+        'delivery_charge': S('Sum of the per-item delivery fees.'),
+        'total_price': S('subtotal + delivery_charge.'),
         'shipping_address': S(),
         'shipping_city': S(),
         'shipping_zone': S('Zone name snapshot taken at checkout.'),
@@ -466,8 +498,10 @@ DOCS = {
     ('GET', '/api/accounts/profile/'): {
         'summary': 'Profile with buyer orders and seller sales',
         'description': 'One round trip for the account page: header data, '
-                       'buyer orders (items nested with their rating and '
-                       'dispute) and the seller sales list.',
+                       'buyer orders (items nested with their rating, dispute '
+                       'and return request / 24-hour return window) and the '
+                       'seller sales list with the platform fee and net '
+                       'payout per sale.',
         'responses': {
             '200': ok(O({
                 'username': S(),
@@ -559,15 +593,22 @@ DOCS = {
         'responses': {'200': ok(A(R('Item')))},
     },
     ('GET', '/api/products/seller-dashboard/'): {
-        'summary': 'Seller KPIs: revenue split, counts and recent activity',
-        'description': 'Revenue is partitioned into cleared (delivered) and '
-                       'pending (in-escrow, any active ladder status) so the '
-                       'two always add up to total_revenue.',
+        'summary': 'Seller KPIs: revenue split, fees, payouts and activity',
+        'description': 'Gross revenue, the 5% platform fee and the net payout '
+                       'are a single reconciliation. Cleared (delivered) and '
+                       'pending (in-escrow) payouts only include non-cancelled, '
+                       'non-refunded items; approved returns are excluded and '
+                       'reported separately in refunded_amount.',
         'responses': {
             '200': ok(O({
-                'total_revenue': N(),
-                'completed_payouts': N('Delivered items.'),
-                'pending_payouts': N('In-escrow items.'),
+                'total_revenue': N('Alias of gross_revenue.'),
+                'gross_revenue': N('Item sales, before the platform fee.'),
+                'platform_fees': N('5% commission deducted from gross.'),
+                'net_payout': N('gross_revenue - platform_fees.'),
+                'completed_payouts': N('Delivered items (net payout).'),
+                'pending_payouts': N('In-escrow items (net payout).'),
+                'refunded_amount': N('Item + delivery refunded on approved '
+                                     'returns.'),
                 'active_listings_count': I(),
                 'pending_review_count': I(),
                 'rejected_count': I(),
@@ -606,15 +647,49 @@ DOCS = {
             '404': ok(R('Error')),
         },
     },
+    ('GET', '/api/products/checkout/quote/'): {
+        'summary': 'Live checkout price preview (pincode + cart)',
+        'description': 'Resolves the pincode and prices the cart exactly as '
+                       'checkout will, so the buyer sees the delivery charge '
+                       'before placing the order. Each item is intra-city '
+                       '(same-city delivery) or intercity (cross-city hub '
+                       'delivery); the per-item fees are returned with the '
+                       'totals.',
+        'parameters': [q('pincode', S('Exactly 6 digits.'), 'Delivery pincode.',
+                         required=True)],
+        'responses': {
+            '200': ok(O({
+                'pincode': S(),
+                'city': S(),
+                'zone_id': I(),
+                'zone_name': S(),
+                'items': A(O({
+                    'cart_item_id': I(),
+                    'item_id': I(),
+                    'title': S(),
+                    'price': S(),
+                    'is_intercity': B(),
+                    'delivery_charge': S(),
+                    'available': B(),
+                })),
+                'subtotal': S('Sum of item prices.'),
+                'delivery_charge': S('Sum of per-item delivery fees.'),
+                'total_price': S('subtotal + delivery_charge.'),
+            })),
+            '400': ok(R('Error'), 'Empty cart, bad pincode or unserviceable '
+                                   'pincode'),
+        },
+    },
     ('POST', '/api/products/checkout/'): {
         'summary': 'Pincode-first checkout: cart -> order',
         'description': 'The 6-digit pincode is the only location input: it '
                        'resolves the delivery zone and the city server-side. '
                        'All cart items must still be AVAILABLE + APPROVED. '
-                       'Creates the order and its items, reserves the '
-                       'listings, triggers pickup-agent assignment and '
-                       'returns the 4-digit delivery OTP. Throttled to '
-                       '10 checkouts/minute.',
+                       'Prices each item with the route-based delivery fee and '
+                       'the 5% platform commission, snapshots the money onto '
+                       'the order/item rows, reserves the listings, triggers '
+                       'pickup-agent assignment and returns the 4-digit '
+                       'delivery OTP. Throttled to 10 checkouts/minute.',
         'request': body(O({
             'pincode': S('Exactly 6 digits; must fall in an active zone.'),
             'phone': S('Contact number for the delivery agent.'),
@@ -624,7 +699,9 @@ DOCS = {
             '201': ok(O({
                 'message': S(),
                 'order_id': I(),
-                'total_price': S(),
+                'subtotal': S('Item prices (excluding delivery).'),
+                'delivery_charge': S('Sum of the per-item delivery fees.'),
+                'total_price': S('subtotal + delivery_charge.'),
                 'delivery_otp': S('4 digits, shown to the buyer only.'),
             }), 'Order placed'),
             '400': ok(R('Error'), 'Empty cart, bad pincode, unserviceable '
@@ -667,9 +744,10 @@ DOCS = {
     # ----- Orders --------------------------------------------------------
     ('GET', '/api/orders/success/{order_id}/'): {
         'summary': 'Order confirmation payload',
-        'description': 'Buyer-only confirmation page data: delivery address, '
-                       'OTP, total and each item with its status and tracking '
-                       'id. Another user\'s order returns 404.',
+        'description': 'Buyer-only confirmation page data: item subtotal, '
+                       'delivery charge, total, address, OTP and each item '
+                       'with its status and tracking id. Another user\'s order '
+                       'returns 404.',
         'responses': {'200': ok(R('OrderConfirmation')),
                       '404': ok(R('Error'))},
     },
@@ -687,9 +765,11 @@ DOCS = {
         'summary': 'Cancel an order item before pickup',
         'description': 'Allowed only while ORDER_PLACED or PICKUP_SCHEDULED. '
                        'Restocks the listing, releases the pickup agent, '
-                       'recalculates the order total and notifies the seller. '
-                       'After pickup use the dispute flow instead. Throttled '
-                       'to 10/minute.',
+                       'zeroes the item\'s money fields (no delivery charge, '
+                       'commission, payout or agent pay), recalculates the '
+                       'order totals and notifies the seller. After pickup use '
+                       'the dispute or return flow instead. Throttled to '
+                       '10/minute.',
         'request': body(O({
             'reason': S(enum=['CHANGED_MIND', 'WRONG_ADDRESS',
                               'FOUND_ELSEWHERE', 'OTHER']),
@@ -717,6 +797,30 @@ DOCS = {
             '201': ok(O({'message': S(), 'dispute': O({
                 'id': I(), 'status': S(), 'reason': S()})}), 'Filed'),
             '400': ok(R('Error'), 'Not delivered, duplicate, bad input'),
+            '403': ok(R('Error'), 'Not the buyer'),
+            '404': ok(R('Error')),
+        },
+    },
+    ('POST', '/api/orders/items/{order_item_id}/return/'): {
+        'summary': 'Request a return within 24 hours of delivery',
+        'description': 'Buyer-only, one request per item, and only while the '
+                       'return window is open (RETURN_WINDOW_HOURS, 24 h from '
+                       'delivery). If an admin approves, the buyer is '
+                       'refunded the item price plus that item\'s delivery '
+                       'charge, the 5% commission is reversed (seller payout '
+                       'becomes 0) and the listing is restocked. Agent pay is '
+                       'not touched. Throttled to 10/minute.',
+        'request': body(O({
+            'reason': S(enum=['CHANGED_MIND', 'DAMAGED', 'NOT_AS_DESCRIBED',
+                              'WRONG_ITEM', 'OTHER']),
+            'note': S('Optional free text (<= 1000 chars).'),
+        }, required=['reason'])),
+        'responses': {
+            '201': ok(O({'message': S(), 'return': O({
+                'id': I(), 'status': S(), 'reason': S(),
+                'refund_amount': S()})}), 'Return requested'),
+            '400': ok(R('Error'), 'Not delivered, duplicate, window closed '
+                                   'or invalid reason'),
             '403': ok(R('Error'), 'Not the buyer'),
             '404': ok(R('Error')),
         },
@@ -834,6 +938,43 @@ DOCS = {
             '404': ok(R('Error')),
         },
     },
+    ('GET', '/api/deliveries/admin/returns/'): {
+        'summary': 'Admin return-request queue',
+        'description': 'Buyer return requests, newest first, paginated like '
+                       'the other admin lists. The requested queue is the one '
+                       'needing a decision.',
+        'parameters': [
+            q('status', S(enum=['requested', 'approved', 'rejected']),
+              'Queue bucket (omit for all).'),
+            *PAGE_PARAMS,
+        ],
+        'responses': {
+            '200': ok(page(R('ReturnRow'), {
+                'requested_count': I(),
+                'approved_count': I(),
+                'rejected_count': I(),
+            })),
+        },
+    },
+    ('POST', '/api/deliveries/admin/returns/{return_id}/resolve/'): {
+        'summary': 'Approve or reject a return',
+        'description': 'The note is mandatory and is shown to both buyer and '
+                       'seller. Approval refunds item price + delivery, '
+                       'reverses the 5% commission (seller payout -> 0) and '
+                       'restocks the listing; agent pay is untouched. Rejection '
+                       'leaves the sale intact.',
+        'request': body(O({
+            'status': S(enum=['APPROVED', 'REJECTED']),
+            'note': S('Decision note (<= 1000 chars).'),
+        }, required=['status', 'note'])),
+        'responses': {
+            '200': ok(O({'message': S(), 'return': O({
+                'id': I(), 'status': S(), 'refund_amount': S(),
+                'admin_note': S()})})),
+            '400': ok(R('Error'), 'Already decided or missing note'),
+            '404': ok(R('Error')),
+        },
+    },
     ('PATCH', '/api/deliveries/admin/orders/{id}/update/'): {
         'summary': 'Correct an order\'s shipping details',
         'description': 'Any subset may be sent; empty strings are rejected. '
@@ -942,14 +1083,66 @@ DOCS = {
         'responses': {'200': ok(O({
             'id': I(), 'username': S(), 'email': S(), 'address': S()}))},
     },
+    ('GET', '/api/deliveries/agent/earnings/'): {
+        'summary': 'Agent earnings across both delivery legs',
+        'description': 'A leg is earned when it completes: an intercity '
+                       'pickup leg on DROPPED_AT_ORIGIN_HUB, an intra-city '
+                       'item or the intercity delivery leg on DELIVERED. '
+                       'pending_total is what the agent\'s open tasks will add. '
+                       'Rates come from the checkout snapshot on each item.',
+        'responses': {
+            '200': ok(O({
+                'earned_total': S(),
+                'pending_total': S(),
+                'completed_tasks': I(),
+                'recent': A(O({
+                    'id': I(),
+                    'item_title': S(),
+                    'tracking_number': S(),
+                    'role': S(enum=['pickup', 'delivery']),
+                    'amount': S(),
+                    'status': S(),
+                })),
+            })),
+        },
+    },
     ('GET', '/api/deliveries/admin/analytics/'): {
         'summary': 'Platform analytics for the admin dashboard',
         'description': 'Returns summary counters, per-city order counts, the '
-                       'status breakdown, agent utilization, top sellers and '
-                       'a revenue trend. Delivered revenue and in-flight '
-                       'counts share the same ACTIVE_STATUSES definition as '
-                       'the rest of the app, so hub statuses are included.',
-        'responses': {'200': ok(FREE)},
+                       'status breakdown, agent utilization, top sellers (by '
+                       'net payout) and a revenue trend. The summary includes '
+                       'the marketplace money roll-up taken from the per-item '
+                       'checkout snapshots: gross sales, platform commission, '
+                       'delivery revenue, seller and agent payouts, platform '
+                       'earnings, refunds and the pending-return count.',
+        'responses': {
+            '200': ok(O({
+                'summary': O({
+                    'total_orders': I(),
+                    'completed_revenue': N(),
+                    'delivered_items': I(),
+                    'in_transit_items': I(),
+                    'awaiting_assignment': I(),
+                    'active_listings': I(),
+                    'pending_listings': I(),
+                    'registered_users': I(),
+                    'total_agents': I(),
+                    'gross_sales': N(),
+                    'platform_commission': N(),
+                    'delivery_revenue': N(),
+                    'seller_payouts': N(),
+                    'agent_payouts': N(),
+                    'platform_earnings': N(),
+                    'refunds': N(),
+                    'pending_returns': I(),
+                }),
+                'orders_per_city': A(FREE),
+                'status_breakdown': A(FREE),
+                'agents': A(FREE),
+                'top_sellers': A(FREE),
+                'revenue_trend': A(FREE),
+            })),
+        },
     },
 
     # ----- Zones & hubs --------------------------------------------------

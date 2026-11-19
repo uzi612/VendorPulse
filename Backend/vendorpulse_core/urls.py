@@ -10,7 +10,6 @@ from drf_spectacular.views import (
 def health(request):
     return JsonResponse({"status": "ok"})
 
-
 APP_URL_INCLUDES = [
     path('accounts/', include('accounts.urls')),
     path('products/', include('products.urls')),
@@ -21,7 +20,9 @@ APP_URL_INCLUDES = [
 
 urlpatterns = [
     path('health/', health),
-    path('admin/', admin.site.urls),
+    # The React portal owns /admin/* (/admin/login/, /admin/returns/, ...),
+    # so Django's own admin lives here instead.
+    path('django-admin/', admin.site.urls),
     # API documentation (see SPECTACULAR_SETTINGS in settings.py).
     path('api/schema/', SpectacularAPIView.as_view(), name='api-schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='api-schema'),name='api-docs'),
