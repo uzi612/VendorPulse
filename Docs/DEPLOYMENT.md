@@ -885,7 +885,9 @@ local media disk. Same origin, same session cookies, same `/api/...` contract.
 
 ### C.2 What the code does now
 
-- `Dockerfile` — Node stage builds the SPA; Python stage runs Gunicorn.
+- `Dockerfile` — three stages: Node builds the SPA, a build stage compiles the
+  Python wheels (mysqlclient), and a slim runtime stage runs Gunicorn
+  (~430 MB; no compilers in the final image).
 - `deploy/entrypoint.sh` — `migrate` → `collectstatic` → optional `SEED_ON_START=1`
   → Gunicorn on `$PORT` (`WEB_WORKERS`/`WEB_THREADS` default 2/4).
 - `render.yaml` — Blueprint (optional; the dashboard works too).
