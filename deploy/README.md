@@ -1,15 +1,31 @@
 # Deployment artifacts
 
-Linux/VPS files referenced by [`../Docs/DEPLOYMENT.md`](../Docs/DEPLOYMENT.md).
+Files referenced by [`../Docs/DEPLOYMENT.md`](../Docs/DEPLOYMENT.md).
 Nothing here is used by local development.
 
-| File | Install target |
+| File | Purpose |
 |---|---|
-| `nginx-vendorpulse.conf` | `/etc/nginx/sites-available/vendorpulse` (replace the example domain) |
-| `vendorpulse.service` | `/etc/systemd/system/vendorpulse.service` |
-| `release.sh` | run from the repo on the server (or copy to `/usr/local/bin/vendorpulse-deploy`) |
+| `nginx-vendorpulse.conf` | VPS track: `/etc/nginx/sites-available/vendorpulse` (replace the example domain) |
+| `vendorpulse.service` | VPS track: `/etc/systemd/system/vendorpulse.service` |
+| `release.sh` | VPS track: clone → install → migrate → build → switch `current` |
+| `provision.sh` | VPS track: one-time, idempotent server setup |
+| `preflight.sh` | Release gate (`check`, migrations, schema, frontend build); works locally, in CI, on the server |
+| `entrypoint.sh` | Container track: migrate → collectstatic → Gunicorn |
 | `vendorpulse-backup.cron` | `/etc/cron.d/vendorpulse-backup` |
 | `backup.cnf.example` | `/etc/vendorpulse/backup.cnf` (mode 600, real password) |
+
+## Render / Docker ($0 demo)
+
+The repository root has `Dockerfile` and `render.yaml`. On that track:
+
+- No Nginx: WhiteNoise serves `/static/` from Gunicorn and `urls.py` serves the
+  SPA shell for client-side routes.
+- No media disk: set `R2_*` so uploads go to Cloudflare R2.
+- No one-off jobs/shell on the free plan: migrations run in `entrypoint.sh`;
+  run seeds/admin commands from your machine against the production DB.
+- Set `SEED_ON_START=1` for the first deploy only.
+
+See **Appendix C** in `../Docs/DEPLOYMENT.md`.
 
 ## One-time server setup
 

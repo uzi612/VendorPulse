@@ -517,9 +517,9 @@ server {
         access_log off;
     }
 
-    # collectstatic output
+    # collectstatic output (STATIC_ROOT = Backend/staticfiles)
     location /static/ {
-        alias /var/www/vendorpulse/current/staticfiles/;
+        alias /var/www/vendorpulse/current/Backend/staticfiles/;
         expires 30d;
         access_log off;
     }
@@ -864,3 +864,110 @@ Both are viable:
 
 The single-VPS plan above is the shortest path with the fewest moving parts
 for this codebase and keeps local-disk media valid.
+
+---
+
+## Appendix C — Render track ($0 demo)
+
+The application is unchanged: **React SPA + Django REST Framework + MySQL**.
+Only the packaging differs — Render replaces Nginx/systemd, and R2 replaces the
+local media disk. Same origin, same session cookies, same `/api/...` contract.
+
+### C.1 Stack
+
+| Piece | Service | Free allowance |
+|---|---|---|
+| Web | Render Free Web Service (Docker, Singapore) | 512 MB / 0.1 CPU, sleeps after 15 min (~1 min wake), 750 instance-hours/mo |
+| Database | TiDB Cloud Starter (MySQL 8 compatible) | 5 GiB + 50M RU/mo, TLS required |
+| Cache | Render Key Value | 25 MB in-memory |
+| Media | Cloudflare R2 | 10 GB storage, no egress fees |
+| Domain/TLS | `<name>.onrender.com` | included |
+
+### C.2 What the code does now
+
+- `Dockerfile` — Node stage builds the SPA; Python stage runs Gunicorn.
+- `deploy/entrypoint.sh` — `migrate` → `collectstatic` → optional `SEED_ON_START=1`
+  → Gunicorn on `$PORT` (`WEB_WORKERS`/`WEB_THREADS` default 2/4).
+- `render.yaml` — Blueprint (optional; the dashboard works too).
+- **WhiteNoise** serves `/static/` (compressed), replacing Nginx.
+- Vite builds with `base=/static/`, so SPA assets are ordinary static files.
+- With `DEBUG=False` the URLconf adds an **SPA fallback** for client routes
+  (`/products/...`, `/orders/...`, `/admin/...`, `/agent/...`).
+- The bare mounts (`/accounts/login/`, `/products/items/`, ...) are
+  **development-only** (`SERVE_BARE_API`), because without Nginx they collide
+  with SPA routes. The SPA calls `/api/...` exclusively.
+- Uploads go to R2 when `R2_BUCKET` is set (`STORAGES['default']`);
+  otherwise local disk as before.
+- Managed MySQL TLS via `DB_SSL_MODE` (+ optional `DB_SSL_CA`).
+- `RENDER_EXTERNAL_HOSTNAME` is appended to `ALLOWED_HOSTS` and
+  `CSRF_TRUSTED_ORIGINS` automatically.
+
+### C.3 Deploy
+
+1. **TiDB Cloud Starter** → create a cluster, save host, port `4000`, user
+   (`<prefix>.root`), password, and download the CA certificate.
+2. **Import the current data** (dump locally first; see C.4).
+3. **Cloudflare R2** → create a bucket, enable public access, create an API
+   token (Object Read & Write), note the S3 endpoint and public hostname.
+4. **Render** → New → Blueprint (repo `render.yaml`) or Web Service with
+   Docker. Set the `sync: false` variables: `DB_HOST`, `DB_USER`,
+   `DB_PASSWORD`, `REDIS_URL`, `R2_*`. `SECRET_KEY` is generated.
+5. **Render Key Value** → create the free instance, copy its internal URL into
+   `REDIS_URL`, redeploy.
+6. First deploy only: set `SEED_ON_START=1`, deploy, verify zones/hubs/agents
+   exist, then remove it (it is idempotent but slows cold starts).
+7. Run the §12 smoke checklist against the `onrender.com` URL.
+
+Free instances have no shell and no one-off jobs, so run admin tasks
+(`createsuperuser`, seeds, data fixes) **from your machine** with the
+production environment exported:
+
+```bash
+export DEBUG=False
+export SECRET_KEY=...            # same value as Render
+export DB_HOST=... DB_PORT=4000 DB_USER=... DB_PASSWORD=...
+export DB_SSL_MODE=REQUIRED
+cd Backend && ./venv/Scripts/python manage.py createsuperuser   # Windows
+```
+
+Migrations run automatically at container start.
+
+### C.4 Moving the current data
+
+```bash
+# local dump (dev DB listens on 3307)
+mysqldump --host=127.0.0.1 --port=3307 --user=root --password \
+  --single-transaction --set-gtid-purged=OFF \
+  --default-character-set=utf8mb4 vendorpulse_db | gzip > vendorpulse.sql.gz
+
+# import into TiDB (no --routines/--triggers: TiDB does not support them)
+gunzip -c vendorpulse.sql.gz | mysql \
+  --host=gateway01.<region>.prod.aws.tidbcloud.com --port=4000 \
+  --user=<prefix>.root --ssl-mode=VERIFY_IDENTITY \
+  --ssl-ca=./tidb-ca.pem --database=vendorpulse
+```
+
+Expected counts (current dev DB): **564 users, 29 listings, 11 orders,
+11 order items, 0 returns**.
+
+Media (51 files, ~13 MB):
+
+```bash
+aws s3 cp --recursive Backend/media s3://vendorpulse-media \
+  --endpoint-url https://<account>.r2.cloudflarestorage.com
+```
+
+Image paths in the DB are relative (`items/p9.jpg`), so no rows change.
+
+### C.5 Known limits of the $0 track
+
+- **Cold starts**: the service sleeps after 15 idle minutes; the first request
+  takes about a minute.
+- **No shell / no jobs / no disk**: use R2 and run one-off commands locally.
+- **512 MB**: keep Gunicorn at 2 workers.
+- **No email**: notifications stay in-app; password resets are manual.
+- **No gateway**: checkout is free (accepted pilot limitation).
+- **Key Value is in-memory**: throttle counters reset when it restarts.
+- **Vendor risk**: free tiers change (Aiven retired free MySQL in Nov 2026);
+  keep a `mysqldump` you can restore elsewhere.
+

@@ -1,0 +1,67 @@
+# Render Blueprint - $0 demo deployment.
+#
+# Optional: you can create the web service in the dashboard instead. If you use
+# this file, Render prompts for every `sync: false` value on first deploy.
+#
+# Still manual (see Docs/DEPLOYMENT.md "Track B"):
+#   - TiDB Cloud Starter database (external MySQL-compatible, free)
+#   - Render Key Value (free 25 MB) for REDIS_URL
+#   - Cloudflare R2 bucket + public hostname
+#
+# Free plan notes: the service sleeps after 15 minutes idle and wakes in ~1
+# minute; 512 MB RAM; no persistent disk, shell, or one-off jobs.
+
+services:
+  - type: web
+    name: vendorpulse
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/
+    autoDeploy: true
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        generateValue: true
+
+      # TiDB Cloud Starter (or any MySQL 8-compatible host)
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "4000"
+      - key: DB_NAME
+        value: vendorpulse
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_SSL_MODE
+        value: REQUIRED
+      # Set with DB_SSL_MODE=VERIFY_IDENTITY to verify the provider CA.
+      - key: DB_SSL_CA
+        sync: false
+
+      # Render Key Value (Redis-compatible)
+      - key: REDIS_URL
+        sync: false
+
+      # Cloudflare R2 (S3-compatible, free 10 GB)
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_ENDPOINT_URL
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_PUBLIC_HOST
+        sync: false
+
+      # 512 MB instance: two workers is the practical ceiling.
+      - key: WEB_WORKERS
+        value: "2"
+      - key: WEB_THREADS
+        value: "4"

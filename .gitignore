@@ -7,6 +7,7 @@ Backend/*.pyc
 Backend/db.sqlite3
 Backend/media/
 Backend/staticfiles/
+Backend/spa/
 Backend/.env
 
 # === Node / React (Frontend) ===

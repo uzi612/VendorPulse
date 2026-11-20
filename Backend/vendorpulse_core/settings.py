@@ -27,6 +27,17 @@ if not SECRET_KEY:
             'SECRET_KEY is required when DEBUG=False. Set it in Backend/.env.'
         )
 
+# Managed MySQL providers (TiDB Cloud, PlanetScale, Aiven, ...) require TLS.
+#   DB_SSL_MODE=REQUIRED        encrypt without verifying the certificate
+#   DB_SSL_MODE=VERIFY_IDENTITY + DB_SSL_CA=/path/to/ca.pem   verify the chain
+_db_options = {
+    'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+}
+if os.environ.get('DB_SSL_MODE'):
+    _db_options['ssl_mode'] = os.environ['DB_SSL_MODE']
+if os.environ.get('DB_SSL_CA'):
+    _db_options['ssl'] = {'ca': os.environ['DB_SSL_CA']}
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
@@ -35,9 +46,7 @@ DATABASES = {
         'PASSWORD': os.environ.get('DB_PASSWORD', ''), 
         'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '3306'),
-        'OPTIONS': {
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-        },
+        'OPTIONS': _db_options,
     }
 }
 
@@ -197,6 +206,9 @@ if REDIS_URL:
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Serves /static/ directly from Gunicorn (collectstatic output). On the VPS
+    # Nginx handles this first; on Render/containers there is no proxy.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -216,6 +228,29 @@ CORS_ALLOW_CREDENTIALS = True
 _dev_origins = ('http://localhost:5173,http://127.0.0.1:5173' if DEBUG else '')
 CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', _dev_origins)
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
+
+# Render sets this for every web service, so a free *.onrender.com deployment
+# needs no host configuration in the dashboard.
+_render_host = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if _render_host:
+    if _render_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_render_host)
+    _render_origin = f'https://{_render_host}'
+    if _render_origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(_render_origin)
+
+# The URLconf mounts every domain twice (bare + /api) for backwards
+# compatibility. A single-process host (Gunicorn, no Nginx) cannot tell a bare
+# API path from an SPA route, and they collide on /accounts/login/,
+# /accounts/profile/ and /orders/success/<id>/. The SPA calls /api/... only, so
+# bare mounts stay on for local development and are off in production.
+SERVE_BARE_API = os.environ.get(
+    'SERVE_BARE_API', 'True' if DEBUG else 'False'
+) == 'True'
+
+# The Dockerfile copies frontend/dist here (Vite base=/static/ in production),
+# so the SPA's own JS/CSS are collected and served like any other static file.
+SPA_DIR = BASE_DIR / 'spa'
 
 ROOT_URLCONF = 'vendorpulse_core.urls'
 
@@ -278,6 +313,24 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# Vite builds with base=/static/ (see frontend/vite.config.js), so dist/ can be
+# collected as ordinary static files. WhiteNoise then serves them from
+# Gunicorn, which is what replaces Nginx on Render.
+STATICFILES_DIRS = []
+if SPA_DIR.is_dir():
+    STATICFILES_DIRS.append(SPA_DIR)
+
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    # Manifest hashing is deliberately avoided: the SPA's index.html is copied
+    # verbatim and must not be rewritten by collectstatic.
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage',
+    },
+}
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
@@ -287,6 +340,32 @@ MEDIA_URL = '/media/'
 # Persist uploads outside the release directory in production:
 #   MEDIA_ROOT=/var/www/vendorpulse/shared/media
 MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', BASE_DIR / 'media'))
+
+# Cloudflare R2 (S3-compatible) for user uploads. Render's filesystem is
+# ephemeral, so a disk-less deployment needs object storage. Without R2_* set,
+# uploads stay on the local disk (development and the VPS track).
+R2_BUCKET = os.environ.get('R2_BUCKET')
+if R2_BUCKET:
+    _r2_public_host = os.environ.get('R2_PUBLIC_HOST', '').strip().strip('/')
+    STORAGES['default'] = {
+        'BACKEND': 'storages.backends.s3.S3Storage',
+        'OPTIONS': {
+            'bucket_name': R2_BUCKET,
+            'endpoint_url': os.environ['R2_ENDPOINT_URL'],
+            'access_key': os.environ['R2_ACCESS_KEY_ID'],
+            'secret_key': os.environ['R2_SECRET_ACCESS_KEY'],
+            'region_name': os.environ.get('R2_REGION', 'auto'),
+            # Public bucket: no per-request signatures, long-lived URLs.
+            'default_acl': None,
+            'querystring_auth': False,
+            'file_overwrite': False,
+            'object_parameters': {'CacheControl': 'public, max-age=604800'},
+        },
+    }
+    if _r2_public_host:
+        # r2.dev hostname or a custom domain on the bucket.
+        STORAGES['default']['OPTIONS']['custom_domain'] = _r2_public_host
+        MEDIA_URL = f'https://{_r2_public_host}/'
 
 # Session cookie behavior
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True

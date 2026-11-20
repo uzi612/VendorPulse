@@ -1,0 +1,15 @@
+# Shell scripts run inside Linux containers and on the server; a CRLF shebang
+# breaks them ("bad interpreter"). Keep them LF on every checkout platform.
+*.sh text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+docker-compose*.yml text eol=lf
+
+# Images and other binaries are never converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

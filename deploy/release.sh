@@ -73,7 +73,7 @@ else
     }
 fi
 
-chown -R www-data:www-data "$RELEASE/public" "$MEDIA_DIR"
+chown -R www-data:www-data "$RELEASE/public" "$RELEASE/Backend/staticfiles" "$MEDIA_DIR"
 
 log "Switching current -> $RELEASE"
 ln -sfn "$RELEASE" "$APP_ROOT/current"
