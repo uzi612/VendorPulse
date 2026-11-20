@@ -7,6 +7,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from vendorpulse_core.throttles import LoginThrottle, RegisterThrottle
 from .serializers import RegisterSerializer, UserSerializer
 from .models import Profile
+from vendorpulse_core.pricing import is_return_window_open, return_window_ends_at
 from orders.models import Order, OrderItem
 
 @api_view(['POST'])
@@ -91,7 +92,8 @@ def user_profile_api(request):
     orders_qs = list(Order.objects.filter(user=user).order_by('-created_at'))
     items_by_order = {}
     for i in OrderItem.objects.filter(order__user=user).select_related(
-            'seller', 'assigned_agent', 'rating', 'dispute').order_by('id'):
+            'seller', 'assigned_agent', 'rating', 'dispute',
+            'return_request').order_by('id'):
         items_by_order.setdefault(i.order_id, []).append(i)
 
     orders = []
@@ -99,6 +101,8 @@ def user_profile_api(request):
         order_items = items_by_order.get(o.id, [])
         orders.append({
             "id": o.id,
+            "subtotal": o.subtotal,
+            "delivery_charge": o.delivery_charge,
             "total_price": o.total_price,
             "created_at": o.created_at.strftime("%d %b %Y, %I:%M %p"),
             "status": order_items[0].status if order_items else "ORDER_PLACED",
@@ -112,6 +116,26 @@ def user_profile_api(request):
                 "seller_stars": getattr(getattr(i, 'rating', None), 'seller_stars', None),
                 "agent_stars": getattr(getattr(i, 'rating', None), 'agent_stars', None),
                 "cancel_reason": i.cancel_reason,
+                "delivery_charge": i.delivery_charge,
+                "delivered_at": (i.delivered_at.strftime("%d %b %Y, %I:%M %p")
+                                 if i.delivered_at else None),
+                # The 24-hour return window; `can_request_return` is what the
+                # order card uses to show the Return button.
+                "return_window_ends_at": (
+                    return_window_ends_at(i.delivered_at).isoformat()
+                    if i.delivered_at else None),
+                "can_request_return": (
+                    i.status == 'DELIVERED'
+                    and is_return_window_open(i.delivered_at)
+                    and not getattr(i, 'return_request', None)),
+                "return_request": ({
+                    "id": i.return_request.id,
+                    "status": i.return_request.status,
+                    "reason": i.return_request.reason,
+                    "note": i.return_request.note,
+                    "refund_amount": str(i.return_request.refund_amount),
+                    "admin_note": i.return_request.admin_note,
+                } if getattr(i, 'return_request', None) else None),
                 "dispute": ({
                     "id": i.dispute.id,
                     "status": i.dispute.status,
@@ -125,13 +149,18 @@ def user_profile_api(request):
         "id": s.id,
         "item_title": s.item_title,
         "item_price": s.item_price,
+        "platform_fee": s.platform_fee,
+        "seller_payout": s.seller_payout,
+        "return_status": (s.return_request.status
+                          if getattr(s, 'return_request', None) else None),
         "status": s.status,
         "cancel_reason": s.cancel_reason,
         "cancel_note": s.cancel_note,
         "buyer": s.order.user.username,
         "shipping_address": s.order.shipping_address,
         "created_at": s.order.created_at.strftime("%d %b %Y, %I:%M %p")
-    } for s in OrderItem.objects.filter(seller=user).select_related('order', 'order__user').order_by('-order__created_at')]
+    } for s in OrderItem.objects.filter(seller=user).select_related(
+        'order', 'order__user', 'return_request').order_by('-order__created_at')]
 
     return Response({
         "username": user.username,

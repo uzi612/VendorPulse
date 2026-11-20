@@ -11,8 +11,10 @@ from django.db.models import Count, Sum, Q, Avg
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 from datetime import timedelta
+from decimal import Decimal
+from vendorpulse_core.pricing import money
 from orders.models import Order, OrderItem
-from orders.models import Dispute
+from orders.models import Dispute, ReturnRequest
 from accounts.models import Profile
 from products.models import CITY_CHOICES
 from products.models import Item as ProductItem
@@ -110,6 +112,19 @@ def admin_delivery_list(request):
             # Timed line-haul: when this in-transit item is expected to arrive
             # at the destination hub (ISO string; admin UI shows the ETA).
             "linehaul_eta_at": item.linehaul_eta_at.isoformat() if item.linehaul_eta_at else None,
+            # Money snapshot for this item (see vendorpulse_core.pricing):
+            # the buyer's delivery fee, the seller's 5% commission + payout,
+            # and what the agents earn across both legs.
+            "item_subtotal": str(item.item_price),
+            "delivery_charge": str(item.delivery_charge),
+            "platform_fee": str(item.platform_fee),
+            "seller_payout": str(item.seller_payout),
+            "agent_pay": str(item.agent_pay_total),
+            "platform_earnings": str(money(
+                item.platform_fee + item.delivery_charge
+                - item.pickup_agent_pay - item.delivery_agent_pay)),
+            "return_status": (item.return_request.status
+                              if getattr(item, 'return_request', None) else None),
         })
 
     # ?all=1 keeps the legacy flat-list shape (frontend Sellers tab);
@@ -528,6 +543,11 @@ def agent_delivery_list(request):
             # Which leg this task is for the requesting agent (the UI shows a
             # "Delivery" badge for intercity handover tasks).
             "my_role": 'delivery' if item.delivery_agent_id == request.user.id else 'pickup',
+            # What this agent earns for this task (snapshot from checkout):
+            # the pickup leg fee, or the destination delivery-leg fee.
+            "my_pay": str(item.delivery_agent_pay
+                          if item.delivery_agent_id == request.user.id
+                          else item.pickup_agent_pay),
         })
     return Response(data, status=status.HTTP_200_OK)
 
@@ -624,6 +644,9 @@ def agent_update_status(request, pk):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+        if new_status == 'DELIVERED' and order_item.delivered_at is None:
+            # Starts the buyer's 24-hour return window.
+            order_item.delivered_at = timezone.now()
         order_item.status = new_status
         order_item.save()
 
@@ -680,6 +703,72 @@ def agent_profile_view(request):
         "username": user.username,
         "email": user.email or 'N/A',
         "address": city if city else 'N/A'
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def agent_earnings(request):
+    """
+    Earnings for the calling delivery agent across both legs.
+
+    A leg is earned when it is completed:
+      * intercity pickup (delivery_agent_pay > 0 in the item snapshot) is paid
+        as soon as the item is dropped at the origin hub;
+      * intra-city (delivery_agent_pay == 0) is a single agent end to end, paid
+        when the item is DELIVERED;
+      * the intercity delivery leg is paid on DELIVERED.
+    `pending_total` is what the agent's open tasks will add once finished.
+    """
+    user = request.user
+
+    pickup_qs = OrderItem.objects.filter(assigned_agent=user)
+    delivery_qs = OrderItem.objects.filter(delivery_agent=user)
+
+    # The snapshot tells the two flows apart: only intercity items carry a
+    # delivery-leg fee.
+    pickup_earned = (
+        (Q(delivery_agent_pay__gt=0)
+         & Q(status__in=['DROPPED_AT_ORIGIN_HUB', 'IN_TRANSIT',
+                         'AT_DESTINATION_HUB', 'DELIVERED']))
+        | (Q(delivery_agent_pay=0) & Q(status='DELIVERED'))
+    )
+
+    earned_pickup = pickup_qs.filter(pickup_earned).aggregate(
+        t=Sum('pickup_agent_pay'))['t'] or 0
+    earned_delivery = delivery_qs.filter(status='DELIVERED').aggregate(
+        t=Sum('delivery_agent_pay'))['t'] or 0
+
+    pending_pickup = pickup_qs.exclude(pickup_earned).exclude(
+        status='CANCELLED').aggregate(t=Sum('pickup_agent_pay'))['t'] or 0
+    pending_delivery = delivery_qs.exclude(status='DELIVERED').exclude(
+        status='CANCELLED').aggregate(t=Sum('delivery_agent_pay'))['t'] or 0
+
+    completed_tasks = (pickup_qs.filter(pickup_earned).count()
+                       + delivery_qs.filter(status='DELIVERED').count())
+
+    rows = []
+    for item in OrderItem.objects.filter(
+            Q(assigned_agent=user) | Q(delivery_agent=user)
+    ).exclude(status__in=['ORDER_PLACED', 'CANCELLED']).select_related(
+        'order').order_by('-id')[:10]:
+        is_delivery_leg = item.delivery_agent_id == user.id
+        amount = (item.delivery_agent_pay if is_delivery_leg
+                  else item.pickup_agent_pay)
+        rows.append({
+            "id": item.id,
+            "item_title": item.item_title,
+            "tracking_number": item.tracking_number or '',
+            "role": 'delivery' if is_delivery_leg else 'pickup',
+            "amount": str(amount),
+            "status": item.status,
+        })
+
+    return Response({
+        "earned_total": str(money(earned_pickup + earned_delivery)),
+        "pending_total": str(money(pending_pickup + pending_delivery)),
+        "completed_tasks": completed_tasks,
+        "recent": rows,
     }, status=status.HTTP_200_OK)
 
 @api_view(['PATCH'])
@@ -802,11 +891,161 @@ def admin_resolve_dispute(request, dispute_id):
     }, status=status.HTTP_200_OK)
 
 
+RETURN_STATUS_FILTERS = {
+    'requested': ['REQUESTED'],
+    'approved': ['APPROVED'],
+    'rejected': ['REJECTED'],
+}
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def admin_return_list(request):
+    """
+    Admin queue of buyer return requests, newest first. Paginated like the
+    other admin lists; ?status=requested|approved|rejected filters the queue.
+    """
+    returns = ReturnRequest.objects.select_related(
+        'order_item', 'order_item__order', 'buyer', 'seller', 'resolved_by',
+    ).order_by('-id')
+
+    status_filter = RETURN_STATUS_FILTERS.get(request.GET.get('status'))
+    if status_filter:
+        returns = returns.filter(status__in=status_filter)
+
+    requested_count = ReturnRequest.objects.filter(status='REQUESTED').count()
+    approved_count = ReturnRequest.objects.filter(status='APPROVED').count()
+    rejected_count = ReturnRequest.objects.filter(status='REJECTED').count()
+
+    rows, meta, all_requested = _paginate_queryset(returns, request, default_page_size=10)
+
+    data = [{
+        "id": r.id,
+        "status": r.status,
+        "reason": r.reason,
+        "note": r.note,
+        "item_title": r.order_item.item_title,
+        "item_price": str(r.order_item.item_price),
+        "delivery_charge": str(r.order_item.delivery_charge),
+        "refund_amount": str(r.refund_amount),
+        "order_id": r.order_item.order.id,
+        "tracking_number": r.order_item.tracking_number or '',
+        "buyer": r.buyer.username,
+        "seller": r.seller.username,
+        "delivered_at": (r.order_item.delivered_at.strftime("%d %b %Y, %I:%M %p")
+                         if r.order_item.delivered_at else None),
+        "created_at": r.created_at.strftime("%d %b %Y, %I:%M %p"),
+        "admin_note": r.admin_note,
+        "resolved_by": r.resolved_by.username if r.resolved_by else None,
+        "resolved_at": (r.resolved_at.strftime("%d %b %Y, %I:%M %p")
+                        if r.resolved_at else None),
+    } for r in rows]
+
+    if all_requested:
+        return Response(data, status=status.HTTP_200_OK)
+
+    meta["requested_count"] = requested_count
+    meta["approved_count"] = approved_count
+    meta["rejected_count"] = rejected_count
+    return Response({**meta, "results": data}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def admin_resolve_return(request, return_id):
+    """
+    Admin decides a return: {status: 'APPROVED'|'REJECTED', note: required}.
+
+    Approval is the money-moving step: the buyer is refunded the item price
+    plus that item's delivery charge, the 5% platform fee is reversed (the
+    seller payout for the item becomes 0) and the listing returns to the
+    marketplace. Agent pay is untouched - the agents already did the work.
+    """
+    decision = request.data.get('status')
+    if decision not in ('APPROVED', 'REJECTED'):
+        return Response({"error": "Decision must be APPROVED or REJECTED."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    note = str(request.data.get('note') or '').strip()
+    if not note:
+        return Response({"error": "A note is required (it is shown to both parties)."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    with transaction.atomic():
+        return_request = ReturnRequest.objects.select_for_update().select_related(
+            'order_item', 'order_item__item', 'buyer', 'seller',
+        ).filter(pk=return_id).first()
+        if return_request is None:
+            return Response({"error": "Return request not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+        if return_request.status != 'REQUESTED':
+            return Response(
+                {"error": f"This return was already {return_request.status.lower()}."},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        order_item = return_request.order_item
+        if decision == 'APPROVED':
+            # Full refund = what the buyer paid for this item.
+            return_request.refund_amount = money(
+                order_item.item_price + order_item.delivery_charge)
+            # Commission reversed and the seller's payout cancelled: the sale
+            # is undone, not discounted.
+            order_item.platform_fee = Decimal('0.00')
+            order_item.seller_payout = Decimal('0.00')
+            order_item.save(update_fields=['platform_fee', 'seller_payout'])
+            # The returned item goes back on the marketplace.
+            if order_item.item:
+                order_item.item.status = 'AVAILABLE'
+                order_item.item.save(update_fields=['status'])
+
+        return_request.status = decision
+        return_request.admin_note = note[:1000]
+        return_request.resolved_by = request.user
+        return_request.resolved_at = timezone.now()
+        return_request.save()
+
+    item_title = order_item.item_title
+    if decision == 'APPROVED':
+        message = (f"Return approved for '{item_title}'. Refund of "
+                   f"Rs. {return_request.refund_amount} is on its way. Note: {note}")
+    else:
+        message = f"Return request for '{item_title}' was rejected. Note: {note}"
+
+    notify(return_request.buyer, 'RETURN', message, order_item=order_item)
+    notify(return_request.seller, 'RETURN', message, order_item=order_item)
+
+    return Response({
+        "message": f"Return {decision.lower()}.",
+        "return": {
+            "id": return_request.id,
+            "status": return_request.status,
+            "refund_amount": str(return_request.refund_amount),
+            "admin_note": return_request.admin_note,
+        },
+    }, status=status.HTTP_200_OK)
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminUser])
 def admin_analytics(request):
     # --- summary counters (one aggregate query each) ---
     delivered_q = OrderItem.objects.filter(status='DELIVERED')
+
+    # Money roll-up across every non-cancelled item, from the per-item
+    # snapshots taken at checkout (so it survives rate-card changes).
+    money_totals = OrderItem.objects.exclude(status='CANCELLED').aggregate(
+        gross_sales=Sum('item_price'),
+        commission=Sum('platform_fee'),
+        delivery=Sum('delivery_charge'),
+        seller_payouts=Sum('seller_payout'),
+        pickup_pay=Sum('pickup_agent_pay'),
+        delivery_pay=Sum('delivery_agent_pay'),
+    )
+    refunds = ReturnRequest.objects.filter(status='APPROVED').aggregate(
+        t=Sum('refund_amount'))['t'] or 0
+    agent_payouts = money((money_totals['pickup_pay'] or 0)
+                          + (money_totals['delivery_pay'] or 0))
+
     summary = {
         "total_orders": Order.objects.count(),
         "completed_revenue": delivered_q.aggregate(t=Sum('item_price'))['t'] or 0,
@@ -818,6 +1057,17 @@ def admin_analytics(request):
         "pending_listings": ProductItem.objects.filter(approval_status='PENDING').count(),
         "registered_users": User.objects.count(),
         "total_agents": User.objects.filter(profile__is_delivery_agent=True).count(),
+        # Money model (vendorpulse_core.pricing)
+        "gross_sales": money_totals['gross_sales'] or 0,
+        "platform_commission": money_totals['commission'] or 0,
+        "delivery_revenue": money_totals['delivery'] or 0,
+        "seller_payouts": money_totals['seller_payouts'] or 0,
+        "agent_payouts": agent_payouts,
+        "platform_earnings": money((money_totals['commission'] or 0)
+                                   + (money_totals['delivery'] or 0)
+                                   - agent_payouts),
+        "refunds": refunds,
+        "pending_returns": ReturnRequest.objects.filter(status='REQUESTED').count(),
     }
 
     # --- orders per city (buyer demand) ---
@@ -854,10 +1104,10 @@ def admin_analytics(request):
         "avg_rating": round(u.avg_rating, 1) if u.avg_rating is not None else None,
     } for u in agent_rows]
 
-    # --- top sellers by revenue ---
+    # --- top sellers by payout (net of the 5% platform commission) ---
     top_sellers = OrderItem.objects.values('seller__username').annotate(
         sales=Count('id'),
-        revenue=Sum('item_price'),
+        revenue=Sum('seller_payout'),
         avg_rating=Avg('seller__seller_ratings_received__seller_stars'),
     ).order_by('-revenue')[:5]
 

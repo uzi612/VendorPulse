@@ -1,0 +1,26 @@
+# VendorPulse Gunicorn service.
+# Install: copy to /etc/systemd/system/vendorpulse.service, then
+#   systemctl daemon-reload && systemctl enable --now vendorpulse
+
+[Unit]
+Description=VendorPulse Django (Gunicorn)
+After=network.target mysql.service redis-server.service
+Wants=mysql.service redis-server.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/vendorpulse/current/Backend
+RuntimeDirectory=vendorpulse
+RuntimeDirectoryMode=0750
+ExecStart=/var/www/vendorpulse/venv/bin/gunicorn vendorpulse_core.wsgi:application \
+    --bind unix:/run/vendorpulse/gunicorn.sock \
+    --workers 3 \
+    --timeout 60 \
+    --access-logfile - \
+    --error-logfile -
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

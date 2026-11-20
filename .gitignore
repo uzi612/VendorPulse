@@ -1,11 +1,13 @@
 # === Python / Django (Backend) ===
-backend/venv/
-backend/__pycache__/
-backend/**/__pycache__/
-backend/*.pyc
-backend/db.sqlite3
-backend/media/
-backend/.env
+# Matches the actual directory name (Backend/). Git paths are case-sensitive
+# on Linux/CI, so lowercase patterns would silently stop ignoring these.
+Backend/venv/
+Backend/**/__pycache__/
+Backend/*.pyc
+Backend/db.sqlite3
+Backend/media/
+Backend/staticfiles/
+Backend/.env
 
 # === Node / React (Frontend) ===
 frontend/node_modules/
@@ -23,3 +25,6 @@ frontend/.vite/
 # === Operating System Files ===
 .DS_Store
 Thumbs.db
+
+# Environment variables
+.env

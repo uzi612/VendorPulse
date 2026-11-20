@@ -9,6 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.db.models import Sum, Prefetch, Avg, Count, Q
 import secrets
+from decimal import Decimal
 
 from .models import Item, Cart, CartItem, CITY_CHOICES
 from orders.models import Order, OrderItem, Rating
@@ -16,6 +17,7 @@ from .serializers import ItemSerializer, CartSerializer, SELLER_RATING_ANNOTATIO
 from locations.models import Zone
 from locations.views import zone_for_pincode
 from vendorpulse_core.pagination import paginate_queryset
+from vendorpulse_core.pricing import item_quote, money
 from vendorpulse_core.throttles import CheckoutThrottle, ListingCreateThrottle
 from notifications.utils import notify
 
@@ -189,6 +191,62 @@ def remove_from_cart_api(request, cart_item_id):
     return Response({"detail": "Item removed from cart."}, status=status.HTTP_204_NO_CONTENT)
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def checkout_quote_api(request):
+    """
+    Read-only price preview for the checkout page: resolves the pincode and
+    prices the cart exactly as checkout will, so the buyer sees the delivery
+    charge (and which items are intercity) before placing the order.
+
+    Query: ?pincode=400051
+    """
+    pincode = str(request.GET.get('pincode') or '').strip()
+    if not (pincode.isdigit() and len(pincode) == 6):
+        return Response({"error": "A valid 6-digit delivery pincode is required."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    zone = zone_for_pincode(pincode)
+    if zone is None:
+        return Response({"error": "We don't deliver to this pincode yet."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    cart_items = CartItem.objects.filter(cart__user=request.user).select_related('item')
+    if not cart_items.exists():
+        return Response({"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
+
+    lines = []
+    subtotal = Decimal('0.00')
+    delivery_total = Decimal('0.00')
+    for cart_item in cart_items:
+        item = cart_item.item
+        intercity = bool(item.location) and item.location != zone.city
+        quote = item_quote(item.price, intercity)
+        subtotal += item.price
+        delivery_total += quote['delivery_charge']
+        lines.append({
+            "cart_item_id": cart_item.id,
+            "item_id": item.id,
+            "title": item.title,
+            "price": str(money(item.price)),
+            "is_intercity": intercity,
+            "delivery_charge": str(quote['delivery_charge']),
+            "available": item.status == 'AVAILABLE' and item.approval_status == 'APPROVED',
+        })
+
+    subtotal, delivery_total = money(subtotal), money(delivery_total)
+    return Response({
+        "pincode": pincode,
+        "city": zone.city,
+        "zone_id": zone.id,
+        "zone_name": zone.name,
+        "items": lines,
+        "subtotal": str(subtotal),
+        "delivery_charge": str(delivery_total),
+        "total_price": str(money(subtotal + delivery_total)),
+    }, status=status.HTTP_200_OK)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 @throttle_classes([UserRateThrottle, CheckoutThrottle])
@@ -226,16 +284,28 @@ def checkout_api(request):
     if not phone.strip():
         return Response({"error": "A phone number is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-    total_price = 0
+    subtotal = Decimal('0.00')
+    delivery_total = Decimal('0.00')
+    priced = []
     for cart_item in cart_items:
         item = cart_item.item
         if item.status != 'AVAILABLE' or item.approval_status != 'APPROVED':
             return Response({"error": f"Item '{item.title}' is no longer available."}, status=status.HTTP_400_BAD_REQUEST)
-        total_price += item.price
+        # The route sets the fee: a cross-city item travels as two hub legs,
+        # a same-city item is one agent end to end (vendorpulse_core.pricing).
+        intercity = bool(item.location) and item.location != zone.city
+        quote = item_quote(item.price, intercity)
+        subtotal += item.price
+        delivery_total += quote['delivery_charge']
+        priced.append((cart_item, quote))
+
+    subtotal, delivery_total = money(subtotal), money(delivery_total)
 
     order = Order.objects.create(
         user=user,
-        total_price=total_price,
+        subtotal=subtotal,
+        delivery_charge=delivery_total,
+        total_price=money(subtotal + delivery_total),
         shipping_address=address,
         shipping_city=zone.city,          # derived from the pincode, never trusted from the client
         shipping_zone=zone,
@@ -243,16 +313,22 @@ def checkout_api(request):
         pincode=pincode,
         delivery_otp=f"{secrets.randbelow(10000):04d}"
     )
-    for cart_item in cart_items:
+    for cart_item, quote in priced:
         item = cart_item.item
-        
+
         order_item = OrderItem.objects.create(
             order=order,
             item=item,
             seller=item.seller,
             item_title=item.title,
             item_price=item.price,
-            status='ORDER_PLACED'
+            status='ORDER_PLACED',
+            # Money snapshot: commission split + per-leg agent pay.
+            delivery_charge=quote['delivery_charge'],
+            platform_fee=quote['platform_fee'],
+            seller_payout=quote['seller_payout'],
+            pickup_agent_pay=quote['pickup_agent_pay'],
+            delivery_agent_pay=quote['delivery_agent_pay'],
         )
         item.status = 'RESERVED'
         item.save()
@@ -260,7 +336,9 @@ def checkout_api(request):
         notify(
             item.seller,
             'NEW_SALE',
-            f"Your item '{item.title}' has been sold! Price: Rs. {item.price}. "
+            f"Your item '{item.title}' has been sold! Price: Rs. {item.price} "
+            f"(buyer also paid Rs. {quote['delivery_charge']} delivery). "
+            f"Your payout after the platform fee: Rs. {quote['seller_payout']}. "
             f"Order TRK-{order.id} by {user.username}.",
             order_item=order_item,
         )
@@ -270,7 +348,9 @@ def checkout_api(request):
     return Response({
         "message": "Checkout successful!",
         "order_id": order.id,
-        "total_price": str(total_price),
+        "subtotal": str(subtotal),
+        "delivery_charge": str(delivery_total),
+        "total_price": str(order.total_price),
         "delivery_otp": order.delivery_otp
     }, status=status.HTTP_201_CREATED)
 
@@ -298,26 +378,39 @@ def seller_dashboard_api(request):
     sold_items_count = sold_order_items.exclude(status='CANCELLED').count()
 
     # Revenue partition — one consistent split so the numbers reconcile:
+    #   gross    = item prices of everything non-cancelled, non-refunded
+    #   fees     = the platform's 5% commission on those sales
+    #   net      = gross - fees  (what actually reaches the seller)
     #   cleared  = delivered items (payout complete)
     #   pending  = in-escrow items (order placed / scheduled / picked up /
     #              dispatched / at hub / in intercity transit — money earned
     #              but delivery not finished)
-    #   total    = cleared + pending (everything non-cancelled)
+    # Approved returns are excluded: their payout was reversed.
     ACTIVE_STATUSES = ['ORDER_PLACED', 'PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED',
                        'DROPPED_AT_ORIGIN_HUB', 'IN_TRANSIT', 'AT_DESTINATION_HUB']
 
-    completed_payouts_dict = sold_order_items.filter(
+    earning_items = sold_order_items.exclude(status='CANCELLED').exclude(
+        return_request__status='APPROVED')
+
+    gross_revenue = earning_items.aggregate(t=Sum('item_price'))['t'] or 0
+    platform_fees = earning_items.aggregate(t=Sum('platform_fee'))['t'] or 0
+    net_payout = earning_items.aggregate(t=Sum('seller_payout'))['t'] or 0
+
+    completed_payouts = earning_items.filter(
         status='DELIVERED'
-    ).aggregate(total=Sum('item_price'))
+    ).aggregate(t=Sum('seller_payout'))['t'] or 0
 
-    pending_payouts_dict = sold_order_items.filter(
+    pending_payouts = earning_items.filter(
         status__in=ACTIVE_STATUSES
-    ).aggregate(total=Sum('item_price'))
+    ).aggregate(t=Sum('seller_payout'))['t'] or 0
 
-    total_revenue = (completed_payouts_dict['total'] or 0.00) + (pending_payouts_dict['total'] or 0.00)
+    # What buyers got back on approved returns (item price + delivery charge,
+    # from the refund snapshot recorded by the admin approval).
+    refunded_amount = sold_order_items.filter(
+        return_request__status='APPROVED'
+    ).aggregate(t=Sum('return_request__refund_amount'))['t'] or 0
 
-    pending_payouts = pending_payouts_dict['total'] or 0.00
-    completed_payouts = completed_payouts_dict['total'] or 0.00
+    total_revenue = gross_revenue   # kept for older clients; equals gross
 
     # Seller rating stats — one aggregate over the buyer ratings on this
     # seller's OrderItems (stars only counted; null seller_stars excluded).
@@ -330,11 +423,15 @@ def seller_dashboard_api(request):
         "order_id": sale.order.id,
         "item_title": sale.item_title,
         "item_price": sale.item_price,
+        "platform_fee": sale.platform_fee,
+        "seller_payout": sale.seller_payout,
         "status": sale.status,
+        "return_status": (sale.return_request.status
+                          if getattr(sale, 'return_request', None) else None),
         "cancel_reason": sale.cancel_reason,
         "buyer": sale.order.user.username,
         "shipping_address": sale.order.shipping_address
-    } for sale in sold_order_items.select_related('order__user', 'item').order_by('-id')[:10]]
+    } for sale in sold_order_items.select_related('order__user', 'item', 'return_request').order_by('-id')[:10]]
 
     recent_ratings = [{
         "stars": r.seller_stars,
@@ -346,8 +443,12 @@ def seller_dashboard_api(request):
 
     return Response({
         "total_revenue": total_revenue,
+        "gross_revenue": gross_revenue,
+        "platform_fees": platform_fees,
+        "net_payout": net_payout,
         "completed_payouts": completed_payouts,
         "pending_payouts": pending_payouts,
+        "refunded_amount": refunded_amount,
         "active_listings_count": active_listings_count,
         "pending_review_count": pending_review_count,
         "rejected_count": rejected_count,

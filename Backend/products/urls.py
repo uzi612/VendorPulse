@@ -8,6 +8,7 @@ urlpatterns = [
     path('cart/', cart_detail_api, name='api_cart_detail'),
     path('cart/add/<int:item_id>/', add_to_cart_api, name='api_add_to_cart'),
     path('cart/remove/<int:cart_item_id>/', remove_from_cart_api, name='api_remove_from_cart'),
+    path('checkout/quote/', checkout_quote_api, name='api_checkout_quote'),
     path('checkout/', checkout_api, name='api_checkout'),
     path('seller-dashboard/', seller_dashboard_api, name='api_seller_dashboard'),
     path('admin/moderation/', admin_moderation_queue, name='api_admin_moderation'),

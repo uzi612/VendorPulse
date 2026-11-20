@@ -1,0 +1,6 @@
+# MySQL backup credentials for /etc/cron.d/vendorpulse-backup.
+# Install as /etc/vendorpulse/backup.cnf, owner root, mode 600.
+[client]
+user=vp
+password=REPLACE_WITH_DB_PASSWORD
+host=127.0.0.1
