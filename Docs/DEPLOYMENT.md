@@ -906,8 +906,12 @@ local media disk. Same origin, same session cookies, same `/api/...` contract.
 
 ### C.3 Deploy
 
-1. **TiDB Cloud Starter** → create a cluster, save host, port `4000`, user
-   (`<prefix>.root`), password, and download the CA certificate.
+1. **TiDB Cloud Starter** → create a cluster (Singapore / aws), set a root
+   password, save host, port `4000` and user (`<prefix>.root`), then create the
+   schema: `CREATE DATABASE vendorpulse CHARACTER SET utf8mb4 COLLATE
+   utf8mb4_0900_ai_ci;`. The CA certificate TiDB hands you is already committed
+   as `Backend/certs/isrgrootx1.pem`, so `DB_SSL_MODE=VERIFY_IDENTITY` works
+   without uploading anything.
 2. **Import the current data** (dump locally first; see C.4).
 3. **Cloudflare R2** → create a bucket, enable public access, create an API
    token (Object Read & Write), note the S3 endpoint and public hostname.
@@ -928,8 +932,23 @@ production environment exported:
 export DEBUG=False
 export SECRET_KEY=...            # same value as Render
 export DB_HOST=... DB_PORT=4000 DB_USER=... DB_PASSWORD=...
-export DB_SSL_MODE=REQUIRED
+export DB_SSL_MODE=VERIFY_IDENTITY
+export DB_SSL_CA=Backend/certs/isrgrootx1.pem
 cd Backend && ./venv/Scripts/python manage.py createsuperuser   # Windows
+```
+
+Windows caveat: the bundled mysqlclient links a TLS stack that fails against
+TiDB Cloud (`TLS/SSL error: ... SEC_E_DECRYPT_FAILURE`), and TiDB rejects
+unencrypted connections. On Windows, run one-off commands inside the image
+instead of the local venv (Linux clients and Render are unaffected):
+
+```bash
+docker run --rm -it -w /app/Backend \
+  -e DEBUG=False -e SECRET_KEY=... \
+  -e DB_HOST=... -e DB_PORT=4000 -e DB_NAME=vendorpulse \
+  -e DB_USER=... -e DB_PASSWORD=... \
+  -e DB_SSL_MODE=VERIFY_IDENTITY -e DB_SSL_CA=/app/Backend/certs/isrgrootx1.pem \
+  vendorpulse python manage.py createsuperuser
 ```
 
 Migrations run automatically at container start.
@@ -946,11 +965,15 @@ mysqldump --host=127.0.0.1 --port=3307 --user=root --password \
 gunzip -c vendorpulse.sql.gz | mysql \
   --host=gateway01.<region>.prod.aws.tidbcloud.com --port=4000 \
   --user=<prefix>.root --ssl-mode=VERIFY_IDENTITY \
-  --ssl-ca=./tidb-ca.pem --database=vendorpulse
+  --ssl-ca=Backend/certs/isrgrootx1.pem --database=vendorpulse
 ```
 
 Expected counts (current dev DB): **564 users, 29 listings, 11 orders,
-11 order items, 0 returns**.
+11 order items, 0 returns, 45 zones, 12 hubs**.
+
+The schema must exist before importing (`CREATE DATABASE vendorpulse`). The
+dump contains no `CREATE DATABASE`/`USE`, so it can be loaded into any schema
+name.
 
 Media (51 files, ~13 MB):
 

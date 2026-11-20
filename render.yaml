@@ -39,10 +39,11 @@ services:
       - key: DB_PASSWORD
         sync: false
       - key: DB_SSL_MODE
-        value: REQUIRED
-      # Set with DB_SSL_MODE=VERIFY_IDENTITY to verify the provider CA.
+        value: VERIFY_IDENTITY
+      # Public Let's Encrypt root that TiDB Cloud certificates chain to; it is
+      # committed in the repo and copied into the image.
       - key: DB_SSL_CA
-        sync: false
+        value: /app/Backend/certs/isrgrootx1.pem
 
       # Render Key Value (Redis-compatible)
       - key: REDIS_URL
