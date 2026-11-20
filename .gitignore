@@ -29,3 +29,10 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# === Local database dumps / exports ===
+# backups/ holds prod-bound dumps (may contain password hashes and customer data)
+backups/
+*.sql
+*.sql.gz
+*.dump
