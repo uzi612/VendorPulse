@@ -925,8 +925,9 @@ replaces the local media disk. Same origin, same session cookies, same
    Docker. Set the `sync: false` variables: `DB_HOST`, `DB_USER`,
    `DB_PASSWORD`, `REDIS_URL`, `SUPABASE_ACCESS_KEY_ID`,
    `SUPABASE_SECRET_ACCESS_KEY`. `SECRET_KEY` is generated.
-5. **Render Key Value** → create the free instance, copy its internal URL into
-   `REDIS_URL`, redeploy.
+5. **Render Key Value** → created by the same Blueprint (free, private network
+   only). `REDIS_URL` is wired from its connection string automatically, so
+   nothing to paste.
 6. The imported database already contains zones/hubs/agents, so leave
    `SEED_ON_START` unset. (Fresh database: set it to `1` for the first deploy,
    then remove it.)

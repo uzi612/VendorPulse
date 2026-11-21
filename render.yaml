@@ -45,9 +45,12 @@ services:
       - key: DB_SSL_CA
         value: /app/Backend/certs/isrgrootx1.pem
 
-      # Render Key Value (Redis-compatible)
+      # Render Key Value (Redis-compatible, created by this Blueprint)
       - key: REDIS_URL
-        sync: false
+        fromService:
+          type: keyvalue
+          name: vendorpulse-redis
+          property: connectionString
 
       # Supabase Storage (S3-compatible, free 1 GB)
       - key: SUPABASE_BUCKET
@@ -69,3 +72,13 @@ services:
         value: "2"
       - key: WEB_THREADS
         value: "4"
+
+  # Shared cache for DRF throttle counters, so the two Gunicorn workers agree.
+  # Empty ipAllowList = private network only; the web service is the only client.
+  - type: keyvalue
+    name: vendorpulse-redis
+    plan: free
+    region: singapore
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
+    persistenceMode: "off"
