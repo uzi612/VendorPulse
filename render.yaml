@@ -6,7 +6,7 @@
 # Still manual (see Docs/DEPLOYMENT.md "Track B"):
 #   - TiDB Cloud Starter database (external MySQL-compatible, free)
 #   - Render Key Value (free 25 MB) for REDIS_URL
-#   - Cloudflare R2 bucket + public hostname
+#   - Supabase Storage bucket (S3-compatible, free 1 GB, no card required)
 #
 # Free plan notes: the service sleeps after 15 minutes idle and wakes in ~1
 # minute; 512 MB RAM; no persistent disk, shell, or one-off jobs.
@@ -49,16 +49,19 @@ services:
       - key: REDIS_URL
         sync: false
 
-      # Cloudflare R2 (S3-compatible, free 10 GB)
-      - key: R2_BUCKET
+      # Supabase Storage (S3-compatible, free 1 GB)
+      - key: SUPABASE_BUCKET
+        value: vendorpulse-media
+      - key: SUPABASE_ENDPOINT_URL
+        value: https://vkukxzxdknzgosqffvji.supabase.co/storage/v1/s3
+      - key: SUPABASE_REGION
+        value: us-east-1
+      # Public URL prefix; the bucket must be public.
+      - key: SUPABASE_PUBLIC_HOST
+        value: vkukxzxdknzgosqffvji.supabase.co/storage/v1/object/public/vendorpulse-media
+      - key: SUPABASE_ACCESS_KEY_ID
         sync: false
-      - key: R2_ENDPOINT_URL
-        sync: false
-      - key: R2_ACCESS_KEY_ID
-        sync: false
-      - key: R2_SECRET_ACCESS_KEY
-        sync: false
-      - key: R2_PUBLIC_HOST
+      - key: SUPABASE_SECRET_ACCESS_KEY
         sync: false
 
       # 512 MB instance: two workers is the practical ceiling.

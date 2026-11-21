@@ -870,8 +870,9 @@ for this codebase and keeps local-disk media valid.
 ## Appendix C — Render track ($0 demo)
 
 The application is unchanged: **React SPA + Django REST Framework + MySQL**.
-Only the packaging differs — Render replaces Nginx/systemd, and R2 replaces the
-local media disk. Same origin, same session cookies, same `/api/...` contract.
+Only the packaging differs — Render replaces Nginx/systemd, and Supabase Storage
+replaces the local media disk. Same origin, same session cookies, same
+`/api/...` contract.
 
 ### C.1 Stack
 
@@ -880,7 +881,7 @@ local media disk. Same origin, same session cookies, same `/api/...` contract.
 | Web | Render Free Web Service (Docker, Singapore) | 512 MB / 0.1 CPU, sleeps after 15 min (~1 min wake), 750 instance-hours/mo |
 | Database | TiDB Cloud Starter (MySQL 8 compatible) | 5 GiB + 50M RU/mo, TLS required |
 | Cache | Render Key Value | 25 MB in-memory |
-| Media | Cloudflare R2 | 10 GB storage, no egress fees |
+| Media | Supabase Storage (S3 API) | 1 GB storage, 5 GB egress/mo, no card required |
 | Domain/TLS | `<name>.onrender.com` | included |
 
 ### C.2 What the code does now
@@ -898,8 +899,9 @@ local media disk. Same origin, same session cookies, same `/api/...` contract.
 - The bare mounts (`/accounts/login/`, `/products/items/`, ...) are
   **development-only** (`SERVE_BARE_API`), because without Nginx they collide
   with SPA routes. The SPA calls `/api/...` exclusively.
-- Uploads go to R2 when `R2_BUCKET` is set (`STORAGES['default']`);
-  otherwise local disk as before.
+- Uploads go to Supabase Storage when `SUPABASE_BUCKET` is set
+  (`STORAGES['default']` → `storages.backends.s3.S3Storage`, path-style,
+  public URLs); otherwise local disk as before.
 - Managed MySQL TLS via `DB_SSL_MODE` (+ optional `DB_SSL_CA`).
 - `RENDER_EXTERNAL_HOSTNAME` is appended to `ALLOWED_HOSTS` and
   `CSRF_TRUSTED_ORIGINS` automatically.
@@ -913,15 +915,21 @@ local media disk. Same origin, same session cookies, same `/api/...` contract.
    as `Backend/certs/isrgrootx1.pem`, so `DB_SSL_MODE=VERIFY_IDENTITY` works
    without uploading anything.
 2. **Import the current data** (dump locally first; see C.4).
-3. **Cloudflare R2** → create a bucket, enable public access, create an API
-   token (Object Read & Write), note the S3 endpoint and public hostname.
+3. **Supabase Storage** → create a public bucket (`vendorpulse-media`), then
+   **Storage → S3 access keys** → create a key pair. Endpoint is
+   `https://<project-ref>.supabase.co/storage/v1/s3`, region `us-east-1`, and
+   the public prefix is
+   `https://<project-ref>.supabase.co/storage/v1/object/public/<bucket>`.
+   (Cloudflare R2 works too, but requires a payment method on file.)
 4. **Render** → New → Blueprint (repo `render.yaml`) or Web Service with
    Docker. Set the `sync: false` variables: `DB_HOST`, `DB_USER`,
-   `DB_PASSWORD`, `REDIS_URL`, `R2_*`. `SECRET_KEY` is generated.
+   `DB_PASSWORD`, `REDIS_URL`, `SUPABASE_ACCESS_KEY_ID`,
+   `SUPABASE_SECRET_ACCESS_KEY`. `SECRET_KEY` is generated.
 5. **Render Key Value** → create the free instance, copy its internal URL into
    `REDIS_URL`, redeploy.
-6. First deploy only: set `SEED_ON_START=1`, deploy, verify zones/hubs/agents
-   exist, then remove it (it is idempotent but slows cold starts).
+6. The imported database already contains zones/hubs/agents, so leave
+   `SEED_ON_START` unset. (Fresh database: set it to `1` for the first deploy,
+   then remove it.)
 7. Run the §12 smoke checklist against the `onrender.com` URL.
 
 Free instances have no shell and no one-off jobs, so run admin tasks
@@ -975,11 +983,27 @@ The schema must exist before importing (`CREATE DATABASE vendorpulse`). The
 dump contains no `CREATE DATABASE`/`USE`, so it can be loaded into any schema
 name.
 
-Media (51 files, ~13 MB):
+Media (51 files, ~13 MB) — Supabase's S3 endpoint speaks the AWS CLI, or use the
+`boto3` snippet below:
 
 ```bash
 aws s3 cp --recursive Backend/media s3://vendorpulse-media \
-  --endpoint-url https://<account>.r2.cloudflarestorage.com
+  --endpoint-url https://<project-ref>.supabase.co/storage/v1/s3 \
+  --region us-east-1
+```
+
+```python
+# boto3 equivalent used for this deployment
+s3 = boto3.client(
+    "s3",
+    endpoint_url="https://<project-ref>.supabase.co/storage/v1/s3",
+    aws_access_key_id=..., aws_secret_access_key=...,
+    region_name="us-east-1",
+    config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+)
+for path in Path("Backend/media").rglob("*"):
+    if path.is_file():
+        s3.upload_file(str(path), "vendorpulse-media", path.relative_to("Backend/media").as_posix())
 ```
 
 Image paths in the DB are relative (`items/p9.jpg`), so no rows change.
@@ -988,7 +1012,8 @@ Image paths in the DB are relative (`items/p9.jpg`), so no rows change.
 
 - **Cold starts**: the service sleeps after 15 idle minutes; the first request
   takes about a minute.
-- **No shell / no jobs / no disk**: use R2 and run one-off commands locally.
+- **No shell / no jobs / no disk**: use Supabase Storage and run one-off
+  commands locally.
 - **512 MB**: keep Gunicorn at 2 workers.
 - **No email**: notifications stay in-app; password resets are manual.
 - **No gateway**: checkout is free (accepted pilot limitation).

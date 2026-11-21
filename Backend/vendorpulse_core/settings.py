@@ -341,20 +341,21 @@ MEDIA_URL = '/media/'
 #   MEDIA_ROOT=/var/www/vendorpulse/shared/media
 MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', BASE_DIR / 'media'))
 
-# Cloudflare R2 (S3-compatible) for user uploads. Render's filesystem is
-# ephemeral, so a disk-less deployment needs object storage. Without R2_* set,
-# uploads stay on the local disk (development and the VPS track).
-R2_BUCKET = os.environ.get('R2_BUCKET')
-if R2_BUCKET:
-    _r2_public_host = os.environ.get('R2_PUBLIC_HOST', '').strip().strip('/')
+# Supabase Storage (S3-compatible) for user uploads. Render's filesystem is
+# ephemeral, so a disk-less deployment needs object storage. Without
+# SUPABASE_BUCKET set, uploads stay on the local disk (development and the VPS
+# track).
+SUPABASE_BUCKET = os.environ.get('SUPABASE_BUCKET')
+if SUPABASE_BUCKET:
+    _supabase_public_host = os.environ.get('SUPABASE_PUBLIC_HOST', '').strip().strip('/')
     STORAGES['default'] = {
         'BACKEND': 'storages.backends.s3.S3Storage',
         'OPTIONS': {
-            'bucket_name': R2_BUCKET,
-            'endpoint_url': os.environ['R2_ENDPOINT_URL'],
-            'access_key': os.environ['R2_ACCESS_KEY_ID'],
-            'secret_key': os.environ['R2_SECRET_ACCESS_KEY'],
-            'region_name': os.environ.get('R2_REGION', 'auto'),
+            'bucket_name': SUPABASE_BUCKET,
+            'endpoint_url': os.environ['SUPABASE_ENDPOINT_URL'],
+            'access_key': os.environ['SUPABASE_ACCESS_KEY_ID'],
+            'secret_key': os.environ['SUPABASE_SECRET_ACCESS_KEY'],
+            'region_name': os.environ.get('SUPABASE_REGION', 'us-east-1'),
             # Public bucket: no per-request signatures, long-lived URLs.
             'default_acl': None,
             'querystring_auth': False,
@@ -362,10 +363,9 @@ if R2_BUCKET:
             'object_parameters': {'CacheControl': 'public, max-age=604800'},
         },
     }
-    if _r2_public_host:
-        # r2.dev hostname or a custom domain on the bucket.
-        STORAGES['default']['OPTIONS']['custom_domain'] = _r2_public_host
-        MEDIA_URL = f'https://{_r2_public_host}/'
+    if _supabase_public_host:
+        STORAGES['default']['OPTIONS']['custom_domain'] = _supabase_public_host
+        MEDIA_URL = f'https://{_supabase_public_host}/'
 
 # Session cookie behavior
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True

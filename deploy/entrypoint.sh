@@ -6,6 +6,10 @@ cd /app/Backend
 
 PORT="${PORT:-10000}"
 
+if [ -z "${SUPABASE_BUCKET:-}" ]; then
+  echo "WARNING: SUPABASE_BUCKET is not set - uploads will not survive a restart." >&2
+fi
+
 echo "==> migrate"
 python manage.py migrate --noinput
 
