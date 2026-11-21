@@ -36,3 +36,6 @@ backups/
 *.sql
 *.sql.gz
 *.dump
+
+# === Local notes / exported walkthroughs (repo root only) ===
+/*.html

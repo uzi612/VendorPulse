@@ -6,7 +6,7 @@ from django.db.models import Count, Q
 from .models import OrderItem
 from notifications.utils import notify
 
-MAX_ACTIVE_LOAD = 5   # max in-flight deliveries per agent (across BOTH legs)
+MAX_ACTIVE_LOAD = 8   # max in-flight deliveries per agent (across BOTH legs)
 # Statuses where the agent currently holds responsibility for the item:
 PICKUP_LEG_ACTIVE = ['PICKUP_SCHEDULED', 'PICKED_UP', 'DISPATCHED']  # as assigned_agent
 DELIVERY_LEG_ACTIVE = ['DISPATCHED', 'AT_DESTINATION_HUB']           # as delivery_agent (intercity:
